@@ -1,0 +1,7 @@
+.{
+    .name = .dots,
+    .version = "0.15.2",
+    .dependencies = .{},
+    .paths = .{""},
+    .fingerprint = 0x54d4af2155671ed5,
+}
