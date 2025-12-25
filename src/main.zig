@@ -116,6 +116,11 @@ fn statusSym(status: []const u8) []const u8 {
 
 fn mapStatus(s: []const u8) []const u8 {
     if (std.mem.eql(u8, s, "in_progress")) return "active";
+    if (std.mem.eql(u8, s, "done")) return "closed";
+    return s;
+}
+
+fn displayStatus(s: []const u8) []const u8 {
     if (std.mem.eql(u8, s, "closed")) return "done";
     return s;
 }
@@ -277,7 +282,7 @@ fn writeIssueList(issues: []const sqlite.Issue, skip_done: bool, use_json: bool)
         try w.writeByte('[');
         var first = true;
         for (issues) |issue| {
-            if (skip_done and std.mem.eql(u8, issue.status, "done")) continue;
+            if (skip_done and std.mem.eql(u8, issue.status, "closed")) continue;
             if (!first) try w.writeByte(',');
             first = false;
             try writeIssueJson(issue, w);
@@ -285,7 +290,7 @@ fn writeIssueList(issues: []const sqlite.Issue, skip_done: bool, use_json: bool)
         try w.writeAll("]\n");
     } else {
         for (issues) |issue| {
-            if (skip_done and std.mem.eql(u8, issue.status, "done")) continue;
+            if (skip_done and std.mem.eql(u8, issue.status, "closed")) continue;
             try w.print("[{s}] {c} {s}\n", .{ issue.id, statusChar(issue.status), issue.title });
         }
     }
@@ -318,7 +323,7 @@ fn cmdOff(allocator: Allocator, args: []const []const u8) !void {
     var storage = try openStorage(allocator);
     defer storage.close();
 
-    try storage.updateStatus(args[0], "done", now, now, reason);
+    try storage.updateStatus(args[0], "closed", now, now, reason);
 }
 
 fn cmdRm(allocator: Allocator, args: []const []const u8) !void {
@@ -340,7 +345,7 @@ fn cmdShow(allocator: Allocator, args: []const []const u8) !void {
     defer iss.deinit(allocator);
 
     const w = stdout();
-    try w.print("ID:       {s}\nTitle:    {s}\nStatus:   {s}\nPriority: {d}\n", .{ iss.id, iss.title, iss.status, iss.priority });
+    try w.print("ID:       {s}\nTitle:    {s}\nStatus:   {s}\nPriority: {d}\n", .{ iss.id, iss.title, displayStatus(iss.status), iss.priority });
     if (iss.description.len > 0) try w.print("Desc:     {s}\n", .{iss.description});
     try w.print("Created:  {s}\n", .{iss.created_at});
     if (iss.closed_at) |ca| try w.print("Closed:   {s}\n", .{ca});
@@ -420,7 +425,7 @@ fn cmdBeadsClose(allocator: Allocator, args: []const []const u8) !void {
     var storage = try openStorage(allocator);
     defer storage.close();
 
-    try storage.updateStatus(args[0], "done", now, now, reason);
+    try storage.updateStatus(args[0], "closed", now, now, reason);
 }
 
 fn generateId(allocator: Allocator) ![]u8 {
@@ -470,7 +475,7 @@ fn writeIssueJson(issue: sqlite.Issue, w: Writer) !void {
         try writeJsonString(issue.description, w);
     }
     try w.writeAll(",\"status\":\"");
-    try w.writeAll(issue.status);
+    try w.writeAll(displayStatus(issue.status));
     try w.writeAll("\",\"priority\":");
     try w.print("{d}", .{issue.priority});
     try w.writeAll(",\"issue_type\":\"");
@@ -608,7 +613,7 @@ fn hookSync(allocator: Allocator) !void {
         if (std.mem.eql(u8, status, "completed")) {
             // Mark as done if we have mapping
             if (mapping.get(content)) |dot_id| {
-                storage.updateStatus(dot_id, "done", now, now, "Completed via TodoWrite") catch {};
+                storage.updateStatus(dot_id, "closed", now, now, "Completed via TodoWrite") catch {};
                 if (mapping.fetchRemove(content)) |kv| {
                     allocator.free(kv.key);
                     allocator.free(kv.value);
