@@ -1,0 +1,114 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v0.2.0)'
+        required: true
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-linux
+            artifact: dot-linux-x86_64
+          - os: macos-14
+            target: aarch64-macos
+            artifact: dot-macos-arm64
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SQLite (Ubuntu)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+
+      - name: Install SQLite (macOS)
+        if: runner.os == 'macOS'
+        run: brew install sqlite
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Build Release
+        run: |
+          zig build -Doptimize=ReleaseSmall -Dsystem-sqlite=true
+          strip zig-out/bin/dot || true
+          mv zig-out/bin/dot ${{ matrix.artifact }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          mv artifacts/dot-linux-x86_64/dot-linux-x86_64 release/
+          mv artifacts/dot-macos-arm64/dot-macos-arm64 release/
+          chmod +x release/*
+          ls -la release/
+
+      - name: Get tag name
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: dots ${{ steps.tag.outputs.tag }}
+          draft: false
+          prerelease: false
+          files: |
+            release/dot-linux-x86_64
+            release/dot-macos-arm64
+          body: |
+            ## Installation
+
+            Download the binary for your platform and make it executable:
+
+            ```bash
+            # Linux x86_64
+            curl -L -o dot https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.tag }}/dot-linux-x86_64
+            chmod +x dot
+            sudo mv dot /usr/local/bin/
+
+            # macOS ARM64
+            curl -L -o dot https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.tag }}/dot-macos-arm64
+            chmod +x dot
+            sudo mv dot /usr/local/bin/
+            ```
+
+            ## Verify
+
+            ```bash
+            dot --version
+            ```

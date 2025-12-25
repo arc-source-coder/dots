@@ -1,8 +1,9 @@
 const std = @import("std");
 const fs = std.fs;
 
-// Path to the built binary (set at comptime based on build directory)
-const dot_binary = "/Users/joel/Work/dots/zig-out/bin/dot";
+// Path to the built binary - provided by build.zig
+const build_options = @import("build_options");
+const dot_binary = build_options.dot_binary;
 
 // Test helper to run dot command and capture output
 fn runDot(allocator: std.mem.Allocator, args: []const []const u8, cwd: []const u8) !struct { stdout: []u8, stderr: []u8, term: std.process.Child.Term } {
