@@ -268,7 +268,10 @@ fn cmdAdd(allocator: Allocator, args: []const []const u8) !void {
         .parent = parent,
     };
 
-    try storage.createIssue(issue);
+    storage.createIssue(issue) catch |err| switch (err) {
+        error.DependencyNotFound => fatal("Parent or after issue not found\n", .{}),
+        else => return err,
+    };
 
     const w = stdout();
     if (hasFlag(args, "--json")) {
@@ -772,11 +775,12 @@ fn hookSync(allocator: Allocator) !void {
         }
     }
 
-    // Save mapping atomically before committing DB
-    try saveMappingAtomic(allocator, mapping);
-
-    // Commit transaction
+    // Commit transaction first (DB is source of truth)
     try storage.db.exec("COMMIT");
+
+    // Save mapping after DB commit succeeds
+    // If this fails, mapping can be rebuilt from DB on next run
+    try saveMappingAtomic(allocator, mapping);
 }
 
 fn loadMapping(allocator: Allocator) !Mapping {

@@ -441,11 +441,13 @@ pub const Storage = struct {
         try self.insert_stmt.bindText(8, issue.updated_at);
         _ = try self.insert_stmt.step();
 
-        // Add dependencies
+        // Add dependencies (validate targets exist first)
         if (issue.after) |after_id| {
+            if (!try self.issueExists(after_id)) return error.DependencyNotFound;
             try self.addDependency(issue.id, after_id, "blocks", issue.created_at);
         }
         if (issue.parent) |parent_id| {
+            if (!try self.issueExists(parent_id)) return error.DependencyNotFound;
             try self.addDependency(issue.id, parent_id, "parent-child", issue.created_at);
         }
 
@@ -485,9 +487,14 @@ pub const Storage = struct {
     pub fn deleteIssue(self: *Self, id: []const u8) !void {
         if (!try self.issueExists(id)) return error.IssueNotFound;
 
+        try self.db.exec("BEGIN TRANSACTION");
+        errdefer self.db.exec("ROLLBACK") catch {};
+
         self.delete_stmt.reset();
         try self.delete_stmt.bindText(1, id);
         _ = try self.delete_stmt.step();
+
+        try self.db.exec("COMMIT");
     }
 
     pub fn getIssue(self: *Self, id: []const u8) !?Issue {
