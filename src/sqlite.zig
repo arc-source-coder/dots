@@ -500,10 +500,11 @@ pub const Storage = struct {
     }
 
     pub fn deleteIssue(self: *Self, id: []const u8) !void {
-        if (!try self.issueExists(id)) return error.IssueNotFound;
-
         try self.db.exec("BEGIN TRANSACTION");
         errdefer self.db.exec("ROLLBACK") catch {};
+
+        // Check inside transaction to avoid TOCTOU race
+        if (!try self.issueExists(id)) return error.IssueNotFound;
 
         self.delete_stmt.reset();
         try self.delete_stmt.bindText(1, id);
@@ -606,7 +607,7 @@ pub const Storage = struct {
         return self.allocator.dupe(u8, text);
     }
 
-    fn issueExists(self: *Self, id: []const u8) !bool {
+    pub fn issueExists(self: *Self, id: []const u8) !bool {
         self.exists_stmt.reset();
         try self.exists_stmt.bindText(1, id);
         return try self.exists_stmt.step();

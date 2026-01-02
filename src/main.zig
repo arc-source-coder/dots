@@ -332,17 +332,19 @@ fn writeIssueList(issues: []const sqlite.Issue, skip_done: bool, use_json: bool)
 fn cmdOn(allocator: Allocator, args: []const []const u8) !void {
     if (args.len == 0) fatal("Usage: dot on <id> [id2 ...]\n", .{});
 
-    var ts_buf: [40]u8 = undefined;
-    const now = try formatTimestamp(&ts_buf);
-
     var storage = try openStorage(allocator);
     defer storage.close();
 
+    // Validate all IDs exist before any mutations
     for (args) |id| {
-        storage.updateStatus(id, "active", now, null, null) catch |err| switch (err) {
-            error.IssueNotFound => fatal("Issue not found: {s}\n", .{id}),
-            else => return err,
-        };
+        if (!try storage.issueExists(id)) fatal("Issue not found: {s}\n", .{id});
+    }
+
+    var ts_buf: [40]u8 = undefined;
+    const now = try formatTimestamp(&ts_buf);
+
+    for (args) |id| {
+        try storage.updateStatus(id, "active", now, null, null);
     }
 }
 
@@ -364,17 +366,19 @@ fn cmdOff(allocator: Allocator, args: []const []const u8) !void {
 
     if (ids.items.len == 0) fatal("Usage: dot off <id> [id2 ...] [-r reason]\n", .{});
 
-    var ts_buf: [40]u8 = undefined;
-    const now = try formatTimestamp(&ts_buf);
-
     var storage = try openStorage(allocator);
     defer storage.close();
 
+    // Validate all IDs exist before any mutations
     for (ids.items) |id| {
-        storage.updateStatus(id, "closed", now, now, reason) catch |err| switch (err) {
-            error.IssueNotFound => fatal("Issue not found: {s}\n", .{id}),
-            else => return err,
-        };
+        if (!try storage.issueExists(id)) fatal("Issue not found: {s}\n", .{id});
+    }
+
+    var ts_buf: [40]u8 = undefined;
+    const now = try formatTimestamp(&ts_buf);
+
+    for (ids.items) |id| {
+        try storage.updateStatus(id, "closed", now, now, reason);
     }
 }
 
@@ -384,11 +388,13 @@ fn cmdRm(allocator: Allocator, args: []const []const u8) !void {
     var storage = try openStorage(allocator);
     defer storage.close();
 
+    // Validate all IDs exist before any mutations
     for (args) |id| {
-        storage.deleteIssue(id) catch |err| switch (err) {
-            error.IssueNotFound => fatal("Issue not found: {s}\n", .{id}),
-            else => return err,
-        };
+        if (!try storage.issueExists(id)) fatal("Issue not found: {s}\n", .{id});
+    }
+
+    for (args) |id| {
+        try storage.deleteIssue(id);
     }
 }
 
