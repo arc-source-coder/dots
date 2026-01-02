@@ -838,9 +838,16 @@ pub fn hydrateFromJsonl(storage: *Storage, allocator: Allocator, jsonl_path: []c
             for (deps) |dep| {
                 const dep_type = dep.type orelse "blocks";
                 storage.addDependency(id, dep.depends_on_id, dep_type, created_at) catch |err| switch (err) {
-                    error.DependencyConflict, error.DependencyNotFound => {
+                    error.DependencyConflict, error.DependencyNotFound, error.IssueNotFound => {
                         std.debug.print(
                             "Invalid dependency at {s}:{d} for {s} -> {s}\n",
+                            .{ jsonl_path, line_no + 1, id, dep.depends_on_id },
+                        );
+                        return error.InvalidJsonl;
+                    },
+                    error.DependencyCycle => {
+                        std.debug.print(
+                            "Dependency cycle at {s}:{d} for {s} -> {s}\n",
                             .{ jsonl_path, line_no + 1, id, dep.depends_on_id },
                         );
                         return error.InvalidJsonl;
