@@ -29,7 +29,7 @@ trap "rm -f $EXPORT_FILE" EXIT
 
 # Export issues with embedded dependencies to JSONL
 echo "Exporting issues..."
-sqlite3 -json .beads/beads.db <<'SQL' | jq -c '.[]' > "$EXPORT_FILE"
+sqlite3 -json .beads/beads.db <<'SQL' | jq -c '.[] | .dependencies = (.dependencies | fromjson)' > "$EXPORT_FILE"
 SELECT
   i.id,
   i.title,
@@ -72,11 +72,15 @@ VERIFY_ORIGINAL=$(mktemp /tmp/dots-verify-original.XXXXXX.json)
 VERIFY_NEW=$(mktemp /tmp/dots-verify-new.XXXXXX.json)
 trap "rm -f $EXPORT_FILE $VERIFY_ORIGINAL $VERIFY_NEW" EXIT
 
-# Normalize original export (sorted by id, relevant fields only)
-jq -s 'map({id, title, status, priority}) | sort_by(.id)' "$EXPORT_FILE" > "$VERIFY_ORIGINAL"
+# Normalize original export (sorted by id, relevant fields only, normalize status)
+jq -s 'map({id, title, status: (if .status == "closed" then "done" else .status end), priority}) | sort_by(.id)' "$EXPORT_FILE" > "$VERIFY_ORIGINAL"
 
-# Get all issues from new dots as JSON (sorted by id)
-dot ls --status all --json | jq 'map({id, title, status, priority}) | sort_by(.id)' > "$VERIFY_NEW"
+# Get all issues from new dots as JSON (combine all statuses, sorted by id)
+{
+    dot ls --status open --json
+    dot ls --status active --json
+    dot ls --status closed --json
+} | jq -s 'add | map({id, title, status, priority}) | sort_by(.id)' > "$VERIFY_NEW"
 
 # Compare
 if diff -q "$VERIFY_ORIGINAL" "$VERIFY_NEW" > /dev/null; then
