@@ -25,7 +25,7 @@ fi
 
 # Create temp file for export
 EXPORT_FILE=$(mktemp /tmp/dots-export.XXXXXX.jsonl)
-trap "rm -f $EXPORT_FILE" EXIT
+trap 'rm -f "$EXPORT_FILE"' EXIT
 
 # Export issues with embedded dependencies to JSONL
 echo "Exporting issues..."

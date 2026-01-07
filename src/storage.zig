@@ -24,17 +24,19 @@ pub const StorageError = error{
     IoError,
 };
 
-/// Validates that an ID is safe for use in paths (no path traversal)
+/// Validates that an ID is safe for use in paths (no path traversal, no control chars)
 pub fn validateId(id: []const u8) StorageError!void {
     if (id.len == 0) return StorageError.InvalidId;
     if (id.len > 128) return StorageError.InvalidId;
     // Reject path traversal attempts
     if (std.mem.indexOf(u8, id, "/") != null) return StorageError.InvalidId;
     if (std.mem.indexOf(u8, id, "\\") != null) return StorageError.InvalidId;
-    if (std.mem.eql(u8, id, ".") or std.mem.eql(u8, id, "..")) return StorageError.InvalidId;
-    if (std.mem.startsWith(u8, id, ".") and id.len > 1 and id[1] == '.') return StorageError.InvalidId;
-    // Reject null bytes
-    if (std.mem.indexOf(u8, id, "\x00") != null) return StorageError.InvalidId;
+    if (std.mem.indexOf(u8, id, "..") != null) return StorageError.InvalidId;
+    if (std.mem.eql(u8, id, ".")) return StorageError.InvalidId;
+    // Reject control characters (including null, newlines, tabs)
+    for (id) |c| {
+        if (c < 0x20 or c == 0x7F) return StorageError.InvalidId;
+    }
 }
 
 /// Write content to file atomically (write to .tmp, sync, rename)
@@ -1086,39 +1088,6 @@ pub const Storage = struct {
         }
 
         return issues.toOwnedSlice(self.allocator);
-    }
-
-    fn removeDependency(self: *Self, issue_id: []const u8, depends_on_id: []const u8) !void {
-        const path = try self.findIssuePath(issue_id);
-        defer self.allocator.free(path);
-
-        var issue = try self.readIssueFromPath(path, issue_id);
-        defer issue.deinit(self.allocator);
-
-        // Build new blocks without the removed dependency
-        var new_blocks: std.ArrayList([]const u8) = .{};
-        errdefer {
-            for (new_blocks.items) |b| self.allocator.free(b);
-            new_blocks.deinit(self.allocator);
-        }
-
-        for (issue.blocks) |b| {
-            if (!std.mem.eql(u8, b, depends_on_id)) {
-                const duped = try self.allocator.dupe(u8, b);
-                try new_blocks.append(self.allocator, duped);
-            }
-        }
-
-        const blocks_slice = try new_blocks.toOwnedSlice(self.allocator);
-        defer {
-            for (blocks_slice) |b| self.allocator.free(b);
-            self.allocator.free(blocks_slice);
-        }
-
-        const content = try serializeFrontmatter(self.allocator, issue.withBlocks(blocks_slice));
-        defer self.allocator.free(content);
-
-        try writeFileAtomic(self.dots_dir, path, content);
     }
 
     pub fn listIssues(self: *Self, status_filter: ?Status) ![]Issue {
