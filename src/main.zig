@@ -705,13 +705,13 @@ fn hookSync(allocator: Allocator) !void {
     // If stdin is a TTY, no hook input expected
     if (std.posix.isatty(stdin_fd)) return;
 
-    // Poll for data with 100ms timeout
+    // Poll for data with 500ms timeout (longer for CI environments)
     var fds = [_]std.posix.pollfd{.{
         .fd = stdin_fd,
         .events = std.posix.POLL.IN,
         .revents = 0,
     }};
-    const poll_result = try std.posix.poll(&fds, 100);
+    const poll_result = try std.posix.poll(&fds, 500);
     if (poll_result == 0) return; // Timeout, no data
     if (fds[0].revents & std.posix.POLL.IN == 0) return; // No data available
 

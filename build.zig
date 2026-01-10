@@ -58,6 +58,13 @@ pub fn build(b: *std.Build) void {
     });
     test_mod.addImport("ohsnap", ohsnap.module("ohsnap"));
 
+    // Add zcheck for property testing
+    const zcheck = b.dependency("zcheck", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    test_mod.addImport("zcheck", zcheck.module("zcheck"));
+
     const tests = b.addTest(.{
         .root_module = test_mod,
     });

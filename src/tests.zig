@@ -5,7 +5,7 @@ const build_options = @import("build_options");
 const dot_binary = build_options.dot_binary;
 
 const storage_mod = @import("storage.zig");
-const qc = @import("util/quickcheck.zig");
+const zc = @import("zcheck");
 const mapping_util = @import("util/mapping.zig");
 const OhSnap = @import("ohsnap");
 
@@ -311,7 +311,7 @@ test "prop: ready issues match oracle" {
         deps: [4][4]bool,
     };
 
-    try qc.check(struct {
+    try zc.check(struct {
         fn property(args: ReadyCase) bool {
             const allocator = std.testing.allocator;
 
@@ -380,7 +380,7 @@ test "prop: listIssues filter matches oracle" {
         statuses: [6]Status,
     };
 
-    try qc.check(struct {
+    try zc.check(struct {
         fn property(args: ListCase) bool {
             const allocator = std.testing.allocator;
 
@@ -431,7 +431,7 @@ test "prop: tree children blocked flag matches oracle" {
         child_blocks: [3][3]bool,
     };
 
-    try qc.check(struct {
+    try zc.check(struct {
         fn property(args: TreeCase) bool {
             const allocator = std.testing.allocator;
 
@@ -524,7 +524,7 @@ test "prop: update done sets closed_at" {
         done: bool,
     };
 
-    try qc.check(struct {
+    try zc.check(struct {
         fn property(args: UpdateCase) bool {
             const allocator = std.testing.allocator;
 
@@ -576,7 +576,7 @@ test "prop: unknown id errors" {
         raw: [8]u8,
     };
 
-    try qc.check(struct {
+    try zc.check(struct {
         fn property(args: UnknownCase) bool {
             const allocator = std.testing.allocator;
 
@@ -699,7 +699,7 @@ test "prop: invalid dependency rejected" {
         use_parent: bool,
     };
 
-    try qc.check(struct {
+    try zc.check(struct {
         fn property(args: DepCase) bool {
             const allocator = std.testing.allocator;
 
@@ -1023,7 +1023,7 @@ test "prop: hook sync updates mapping and statuses" {
         tool_input: HookTodoInput,
     };
 
-    try qc.check(struct {
+    try zc.check(struct {
         fn property(args: HookCase) bool {
             const allocator = std.testing.allocator;
 
@@ -1489,7 +1489,7 @@ test "prop: lifecycle simulation maintains invariants" {
         ops: [12]struct { op: u3, target: u3, secondary: u3, priority: u3 },
     };
 
-    try qc.check(struct {
+    try zc.check(struct {
         fn property(args: LifecycleCase) bool {
             const allocator = std.testing.allocator;
 
@@ -1617,7 +1617,7 @@ test "prop: transitive blocking chains" {
         target_position: u3, // which one to check if blocked
     };
 
-    try qc.check(struct {
+    try zc.check(struct {
         fn property(args: ChainCase) bool {
             const allocator = std.testing.allocator;
             const chain_len = @max(2, (args.chain_length % 6) + 2); // 2-7
@@ -1695,7 +1695,7 @@ test "prop: parent-child close constraint" {
         children_closed: [4]bool, // which children are closed
     };
 
-    try qc.check(struct {
+    try zc.check(struct {
         fn property(args: ParentChildCase) bool {
             const allocator = std.testing.allocator;
             const num_children = @max(1, (args.num_children % 4) + 1);
@@ -1777,7 +1777,7 @@ test "prop: priority ordering in list" {
         priorities: [6]u3,
     };
 
-    try qc.check(struct {
+    try zc.check(struct {
         fn property(args: PriorityCase) bool {
             const allocator = std.testing.allocator;
 
@@ -1831,7 +1831,7 @@ test "prop: status transition state machine" {
         transitions: [8]u2, // 0=open, 1=active, 2=closed
     };
 
-    try qc.check(struct {
+    try zc.check(struct {
         fn property(args: TransitionCase) bool {
             const allocator = std.testing.allocator;
 
@@ -1894,7 +1894,7 @@ test "prop: search finds exactly matching issues" {
         has_bar: [4]bool,
     };
 
-    try qc.check(struct {
+    try zc.check(struct {
         fn property(args: SearchCase) bool {
             const allocator = std.testing.allocator;
 
@@ -2139,6 +2139,109 @@ test "cli: hook sync without stdin returns success" {
     // Should succeed with exit code 0, not block or error
     try std.testing.expect(isExitCode(result.term, 0));
     try std.testing.expectEqualStrings("", result.stderr);
+}
+
+test "cli: concurrent hook sync uses locking" {
+    // Test that concurrent hook sync operations don't corrupt mapping file
+    const allocator = std.testing.allocator;
+
+    const test_dir = setupTestDirOrPanic(allocator);
+    defer cleanupTestDirAndFree(allocator, test_dir);
+
+    _ = runDot(allocator, &.{"init"}, test_dir) catch |err| {
+        std.debug.panic("init: {}", .{err});
+    };
+
+    // Spawn multiple concurrent sync processes with different todos
+    const num_procs = 4;
+    var children: [num_procs]std.process.Child = undefined;
+
+    for (0..num_procs) |i| {
+        var input_buf: [256]u8 = undefined;
+        const input = std.fmt.bufPrint(&input_buf, "{{\"tool_name\":\"TodoWrite\",\"tool_input\":{{\"todos\":[{{\"content\":\"task-{d}\",\"status\":\"pending\"}}]}}}}", .{i}) catch unreachable;
+
+        var argv: std.ArrayList([]const u8) = .{};
+        defer argv.deinit(allocator);
+        try argv.append(allocator, dot_binary);
+        try argv.append(allocator, "hook");
+        try argv.append(allocator, "sync");
+
+        children[i] = std.process.Child.init(argv.items, allocator);
+        children[i].cwd = test_dir;
+        children[i].stdin_behavior = .Pipe;
+        children[i].stdout_behavior = .Pipe;
+        children[i].stderr_behavior = .Pipe;
+
+        try children[i].spawn();
+        try children[i].stdin.?.writeAll(input);
+        children[i].stdin.?.close();
+        children[i].stdin = null;
+    }
+
+    // Wait for all processes
+    var all_succeeded = true;
+    for (0..num_procs) |i| {
+        _ = try children[i].stdout.?.readToEndAlloc(allocator, max_output_bytes);
+        _ = try children[i].stderr.?.readToEndAlloc(allocator, max_output_bytes);
+        const term = try children[i].wait();
+        if (!isExitCode(term, 0)) all_succeeded = false;
+    }
+
+    // All should succeed (some may skip due to lock contention, but none should fail)
+    try std.testing.expect(all_succeeded);
+
+    // Verify mapping file is valid JSON (not corrupted)
+    const mapping_path = std.fmt.allocPrint(allocator, "{s}/.dots/todo-mapping.json", .{test_dir}) catch unreachable;
+    defer allocator.free(mapping_path);
+
+    const file = fs.cwd().openFile(mapping_path, .{}) catch |err| {
+        // File may not exist if all processes hit lock contention - that's OK
+        if (err == error.FileNotFound) return;
+        return err;
+    };
+    defer file.close();
+
+    const content = try file.readToEndAlloc(allocator, max_mapping_bytes);
+    defer allocator.free(content);
+
+    // Should parse as valid JSON
+    const parsed = std.json.parseFromSlice(mapping_util.Mapping, allocator, content, .{
+        .ignore_unknown_fields = true,
+    }) catch |err| {
+        std.debug.print("Mapping file corrupted: {s}\nError: {}\n", .{ content, err });
+        return error.MappingCorrupted;
+    };
+    parsed.deinit();
+}
+
+test "cli: hook sync handles malformed mapping gracefully" {
+    // Test that hook sync fails gracefully with corrupted mapping file
+    const allocator = std.testing.allocator;
+
+    const test_dir = setupTestDirOrPanic(allocator);
+    defer cleanupTestDirAndFree(allocator, test_dir);
+
+    _ = runDot(allocator, &.{"init"}, test_dir) catch |err| {
+        std.debug.panic("init: {}", .{err});
+    };
+
+    // Write corrupted mapping file
+    const mapping_path = std.fmt.allocPrint(allocator, "{s}/.dots/todo-mapping.json", .{test_dir}) catch unreachable;
+    defer allocator.free(mapping_path);
+
+    const file = try fs.cwd().createFile(mapping_path, .{});
+    try file.writeAll("{ invalid json [[[");
+    file.close();
+
+    // Hook sync should fail with error (not crash or corrupt further)
+    const input = "{\"tool_name\":\"TodoWrite\",\"tool_input\":{\"todos\":[{\"content\":\"test\",\"status\":\"pending\"}]}}";
+    const result = runDotWithInput(allocator, &.{ "hook", "sync" }, test_dir, input) catch |err| {
+        std.debug.panic("hook sync: {}", .{err});
+    };
+    defer result.deinit(allocator);
+
+    // Should fail (non-zero exit) due to invalid JSON
+    try std.testing.expect(!isExitCode(result.term, 0));
 }
 
 test "snap: tree output format" {

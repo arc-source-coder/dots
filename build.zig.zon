@@ -5,6 +5,9 @@
         .ohsnap = .{
             .path = "deps/ohsnap",
         },
+        .zcheck = .{
+            .path = "../zcheck",
+        },
     },
     .paths = .{""},
     .fingerprint = 0x54d4af2155671ed5,
