@@ -711,7 +711,7 @@ fn hookSync(allocator: Allocator) !void {
         .events = std.posix.POLL.IN,
         .revents = 0,
     }};
-    const poll_result = std.posix.poll(&fds, 100) catch return;
+    const poll_result = try std.posix.poll(&fds, 100);
     if (poll_result == 0) return; // Timeout, no data
     if (fds[0].revents & std.posix.POLL.IN == 0) return; // No data available
 
