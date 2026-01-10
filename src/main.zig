@@ -13,13 +13,16 @@ const Storage = storage_mod.Storage;
 const Issue = storage_mod.Issue;
 const Status = storage_mod.Status;
 
-const DOTS_DIR = ".dots";
-const MAPPING_FILE = ".dots/todo-mapping.json";
-const LOCK_FILE = ".dots/todo-mapping.lock";
+const DOTS_DIR = storage_mod.DOTS_DIR;
+const MAPPING_FILE = DOTS_DIR ++ "/todo-mapping.json";
+const LOCK_FILE = DOTS_DIR ++ "/todo-mapping.lock";
 const max_hook_input_bytes = 1024 * 1024;
 const max_mapping_bytes = 1024 * 1024;
 const max_jsonl_line_bytes = 1024 * 1024;
 const default_priority: i64 = 2;
+const MIN_PRIORITY: i64 = 0;
+const MAX_PRIORITY: i64 = 9;
+const HOOK_POLL_TIMEOUT_MS: i32 = 500;
 
 // Command dispatch table
 const Handler = *const fn (Allocator, []const []const u8) anyerror!void;
@@ -133,15 +136,28 @@ fn resolveIdOrFatal(storage: *storage_mod.Storage, id: []const u8) []const u8 {
     };
 }
 
-fn resolveIds(allocator: Allocator, storage: *Storage, ids: []const []const u8) !std.ArrayList([]const u8) {
+fn freeResolvedIds(allocator: Allocator, resolved: *std.ArrayList([]const u8)) void {
+    for (resolved.items) |rid| allocator.free(rid);
+    resolved.deinit(allocator);
+}
+
+fn resolveIds(allocator: Allocator, storage: *Storage, ids: []const []const u8) std.ArrayList([]const u8) {
     var resolved: std.ArrayList([]const u8) = .{};
-    errdefer {
-        for (resolved.items) |id| allocator.free(id);
-        resolved.deinit(allocator);
-    }
 
     for (ids) |id| {
-        try resolved.append(allocator, resolveIdOrFatal(storage, id));
+        const resolved_id = storage.resolveId(id) catch |err| {
+            freeResolvedIds(allocator, &resolved);
+            switch (err) {
+                error.IssueNotFound => fatal("Issue not found: {s}\n", .{id}),
+                error.AmbiguousId => fatal("Ambiguous ID: {s}\n", .{id}),
+                else => fatal("Error resolving ID: {s}\n", .{id}),
+            }
+        };
+        resolved.append(allocator, resolved_id) catch {
+            allocator.free(resolved_id);
+            freeResolvedIds(allocator, &resolved);
+            fatal("Out of memory\n", .{});
+        };
     }
 
     return resolved;
@@ -204,8 +220,10 @@ fn cmdInit(allocator: Allocator, args: []const []const u8) !void {
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         if (getArg(args, &i, "--from-jsonl")) |jsonl_path| {
-            const count = try hydrateFromJsonl(allocator, &storage, jsonl_path);
-            if (count > 0) try stdout().print("Imported {d} issues from {s}\n", .{ count, jsonl_path });
+            const result = try hydrateFromJsonl(allocator, &storage, jsonl_path);
+            if (result.imported > 0) try stdout().print("Imported {d} issues from {s}\n", .{ result.imported, jsonl_path });
+            if (result.skipped > 0) try stderr().print("Warning: skipped {d} issues due to errors\n", .{result.skipped});
+            if (result.dep_skipped > 0) try stderr().print("Warning: skipped {d} dependencies due to errors\n", .{result.dep_skipped});
         }
     }
 
@@ -217,7 +235,16 @@ fn cmdInit(allocator: Allocator, args: []const []const u8) !void {
 
     // Run git add .dots
     var child = std.process.Child.init(&.{ "git", "add", DOTS_DIR }, allocator);
-    _ = try child.spawnAndWait();
+    const term = try child.spawnAndWait();
+    switch (term) {
+        .Exited => |code| {
+            if (code != 0) {
+                try stderr().print("Warning: git add failed with exit code {d}\n", .{code});
+            }
+        },
+        .Signal => |sig| try stderr().print("Warning: git add killed by signal {d}\n", .{sig}),
+        else => try stderr().writeAll("Warning: git add terminated abnormally\n"),
+    }
 }
 
 fn cmdAdd(allocator: Allocator, args: []const []const u8) !void {
@@ -232,7 +259,8 @@ fn cmdAdd(allocator: Allocator, args: []const []const u8) !void {
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         if (getArg(args, &i, "-p")) |v| {
-            priority = std.fmt.parseInt(i64, v, 10) catch fatal("Invalid priority: {s}\n", .{v});
+            const p = std.fmt.parseInt(i64, v, 10) catch fatal("Invalid priority: {s}\n", .{v});
+            priority = std.math.clamp(p, MIN_PRIORITY, MAX_PRIORITY);
         } else if (getArg(args, &i, "-d")) |v| {
             description = v;
         } else if (getArg(args, &i, "-P")) |v| {
@@ -369,7 +397,7 @@ fn cmdOn(allocator: Allocator, args: []const []const u8) !void {
     var storage = try openStorage(allocator);
     defer storage.close();
 
-    var resolved_ids = try resolveIds(allocator, &storage, args);
+    var resolved_ids = resolveIds(allocator, &storage, args);
     defer {
         for (resolved_ids.items) |id| allocator.free(id);
         resolved_ids.deinit(allocator);
@@ -401,7 +429,7 @@ fn cmdOff(allocator: Allocator, args: []const []const u8) !void {
     var storage = try openStorage(allocator);
     defer storage.close();
 
-    var resolved_ids = try resolveIds(allocator, &storage, ids.items);
+    var resolved_ids = resolveIds(allocator, &storage, ids.items);
     defer {
         for (resolved_ids.items) |id| allocator.free(id);
         resolved_ids.deinit(allocator);
@@ -424,7 +452,7 @@ fn cmdRm(allocator: Allocator, args: []const []const u8) !void {
     var storage = try openStorage(allocator);
     defer storage.close();
 
-    var resolved_ids = try resolveIds(allocator, &storage, args);
+    var resolved_ids = resolveIds(allocator, &storage, args);
     defer {
         for (resolved_ids.items) |id| allocator.free(id);
         resolved_ids.deinit(allocator);
@@ -725,7 +753,7 @@ fn hookSync(allocator: Allocator) !void {
         .events = std.posix.POLL.IN,
         .revents = 0,
     }};
-    const poll_result = try std.posix.poll(&fds, 500);
+    const poll_result = try std.posix.poll(&fds, HOOK_POLL_TIMEOUT_MS);
     if (poll_result == 0) return; // Timeout, no data
     if (fds[0].revents & std.posix.POLL.IN == 0) return; // No data available
 
@@ -770,7 +798,10 @@ fn hookSync(allocator: Allocator) !void {
         error.WouldBlock => return, // Another sync in progress, skip
         else => return err,
     };
-    defer lock_file.close();
+    defer {
+        lock_file.close();
+        fs.cwd().deleteFile(LOCK_FILE) catch {};
+    }
 
     // Get prefix for ID generation
     const prefix = try storage_mod.getOrCreatePrefix(allocator, &storage);
@@ -808,13 +839,14 @@ fn hookSync(allocator: Allocator) !void {
             const id = try storage_mod.generateId(allocator, prefix);
             defer allocator.free(id);
             const desc = todo.activeForm orelse "";
-            const priority: i64 = if (std.mem.eql(u8, status, "in_progress")) 1 else default_priority;
+            const is_in_progress = std.mem.eql(u8, status, "in_progress");
+            const priority: i64 = if (is_in_progress) 1 else default_priority;
 
             const issue = Issue{
                 .id = id,
                 .title = content,
                 .description = desc,
-                .status = if (std.mem.eql(u8, status, "in_progress")) .active else .open,
+                .status = if (is_in_progress) .active else .open,
                 .priority = priority,
                 .issue_type = "task",
                 .assignee = null,
@@ -926,14 +958,22 @@ const JsonlIssue = struct {
     dependencies: ?[]const JsonlDependency = null,
 };
 
-fn hydrateFromJsonl(allocator: Allocator, storage: *Storage, jsonl_path: []const u8) !usize {
+const HydrateResult = struct {
+    imported: usize,
+    skipped: usize,
+    dep_skipped: usize,
+};
+
+fn hydrateFromJsonl(allocator: Allocator, storage: *Storage, jsonl_path: []const u8) !HydrateResult {
     const file = fs.cwd().openFile(jsonl_path, .{}) catch |err| switch (err) {
-        error.FileNotFound => return 0,
+        error.FileNotFound => return .{ .imported = 0, .skipped = 0, .dep_skipped = 0 },
         else => return err,
     };
     defer file.close();
 
     var count: usize = 0;
+    var skipped: usize = 0;
+    var dep_skipped: usize = 0;
     const read_buf = try allocator.alloc(u8, max_jsonl_line_bytes);
     defer allocator.free(read_buf);
     var file_reader = fs.File.Reader.init(file, read_buf);
@@ -993,7 +1033,10 @@ fn hydrateFromJsonl(allocator: Allocator, storage: *Storage, jsonl_path: []const
         storage.createIssue(issue, parent_id) catch |err| switch (err) {
             error.IssueAlreadyExists => continue, // Duplicate in JSONL, skip
             error.OutOfMemory => return error.OutOfMemory,
-            else => continue, // Other expected errors (invalid ID format, etc.)
+            else => {
+                skipped += 1;
+                continue;
+            },
         };
 
         // Add block dependencies
@@ -1003,8 +1046,9 @@ fn hydrateFromJsonl(allocator: Allocator, storage: *Storage, jsonl_path: []const
                 if (std.mem.eql(u8, dep_type, "blocks")) {
                     storage.addDependency(obj.id, dep.depends_on_id, "blocks") catch |err| switch (err) {
                         error.OutOfMemory => return error.OutOfMemory,
-                        // DependencyNotFound, DependencyCycle, InvalidId are expected during migration
-                        else => {},
+                        else => {
+                            dep_skipped += 1;
+                        },
                     };
                 }
             }
@@ -1028,5 +1072,5 @@ fn hydrateFromJsonl(allocator: Allocator, storage: *Storage, jsonl_path: []const
         }
     }
 
-    return count;
+    return .{ .imported = count, .skipped = skipped, .dep_skipped = dep_skipped };
 }

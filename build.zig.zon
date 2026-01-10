@@ -1,12 +1,12 @@
 .{
     .name = .dots,
-    .version = "0.15.2",
+    .version = "0.5.3",
     .dependencies = .{
         .ohsnap = .{
             .path = "deps/ohsnap",
         },
         .zcheck = .{
-            .path = "../zcheck",
+            .path = "deps/zcheck",
         },
     },
     .paths = .{""},

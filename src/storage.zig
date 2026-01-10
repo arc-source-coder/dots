@@ -2,12 +2,15 @@ const std = @import("std");
 const fs = std.fs;
 const Allocator = std.mem.Allocator;
 
-const DOTS_DIR = ".dots";
+pub const DOTS_DIR = ".dots";
 const ARCHIVE_DIR = ".dots/archive";
 
 // Buffer size constants
 const MAX_PATH_LEN = 512; // Maximum path length for file operations
 const MAX_ID_LEN = 128; // Maximum ID length (validated in validateId)
+const MAX_ISSUE_FILE_SIZE = 1024 * 1024; // 1MB max issue file
+const MAX_CONFIG_SIZE = 64 * 1024; // 64KB max config file
+const DEFAULT_PRIORITY: i64 = 2; // Default priority for new issues
 
 // Errors
 pub const StorageError = error{
@@ -27,7 +30,7 @@ pub const StorageError = error{
 /// Validates that an ID is safe for use in paths and YAML
 pub fn validateId(id: []const u8) StorageError!void {
     if (id.len == 0) return StorageError.InvalidId;
-    if (id.len > 128) return StorageError.InvalidId;
+    if (id.len > MAX_ID_LEN) return StorageError.InvalidId;
     // Reject path traversal attempts
     if (std.mem.indexOf(u8, id, "/") != null) return StorageError.InvalidId;
     if (std.mem.indexOf(u8, id, "\\") != null) return StorageError.InvalidId;
@@ -40,17 +43,20 @@ pub fn validateId(id: []const u8) StorageError!void {
     }
 }
 
-/// Write content to file atomically (write to .tmp, sync, rename)
+/// Write content to file atomically (write to unique .tmp, sync, rename)
+/// Uses random suffix to prevent concurrent write conflicts
 fn writeFileAtomic(dir: fs.Dir, path: []const u8, content: []const u8) !void {
-    var tmp_path_buf: [MAX_PATH_LEN + 4]u8 = undefined; // +4 for ".tmp" suffix
-    const tmp_path = std.fmt.bufPrint(&tmp_path_buf, "{s}.tmp", .{path}) catch return StorageError.IoError;
+    // Generate unique tmp filename with random suffix
+    var rand_buf: [4]u8 = undefined;
+    std.crypto.random.bytes(&rand_buf);
+    const hex = std.fmt.bytesToHex(rand_buf, .lower);
+
+    var tmp_path_buf: [MAX_PATH_LEN + 16]u8 = undefined; // +16 for ".XXXXXXXX.tmp"
+    const tmp_path = std.fmt.bufPrint(&tmp_path_buf, "{s}.{s}.tmp", .{ path, hex }) catch return StorageError.IoError;
 
     const tmp_file = try dir.createFile(tmp_path, .{});
     defer tmp_file.close();
-    errdefer dir.deleteFile(tmp_path) catch |err| switch (err) {
-        error.FileNotFound => {}, // Already deleted, that's fine
-        else => {}, // Best effort cleanup, can't propagate from errdefer
-    };
+    errdefer dir.deleteFile(tmp_path) catch {};
     try tmp_file.writeAll(content);
     try tmp_file.sync();
 
@@ -268,7 +274,7 @@ pub fn freeChildIssues(allocator: Allocator, issues: []const ChildIssue) void {
 const Frontmatter = struct {
     title: []const u8 = "",
     status: Status = .open,
-    priority: i64 = 2,
+    priority: i64 = DEFAULT_PRIORITY,
     issue_type: []const u8 = "task",
     assignee: ?[]const u8 = null,
     created_at: []const u8 = "",
@@ -698,9 +704,19 @@ pub const Storage = struct {
         return try self.searchForIssue(self.dots_dir, id) orelse StorageError.IssueNotFound;
     }
 
+    const MAX_SEARCH_DEPTH = 10;
+
     fn searchForIssue(self: *Self, dir: fs.Dir, id: []const u8) !?[]const u8 {
+        return self.searchForIssueWithDepth(dir, id, 0);
+    }
+
+    fn searchForIssueWithDepth(self: *Self, dir: fs.Dir, id: []const u8, depth: usize) !?[]const u8 {
+        if (depth >= MAX_SEARCH_DEPTH) return null; // Prevent infinite recursion
+
         var iter = dir.iterate();
         while (try iter.next()) |entry| {
+            // Skip symlinks to prevent infinite loops
+            if (entry.kind == .sym_link) continue;
             if (entry.kind == .directory and !std.mem.eql(u8, entry.name, "archive")) {
                 var subdir = dir.openDir(entry.name, .{ .iterate = true }) catch |err| switch (err) {
                     error.FileNotFound, error.AccessDenied => continue, // Skip inaccessible dirs
@@ -716,8 +732,8 @@ pub const Storage = struct {
                     return full_path;
                 } else |_| {}
 
-                // Recurse
-                if (try self.searchForIssue(subdir, id)) |path| {
+                // Recurse with depth limit
+                if (try self.searchForIssueWithDepth(subdir, id, depth + 1)) |path| {
                     const full_path = std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ entry.name, path }) catch |err| {
                         self.allocator.free(path);
                         return err;
@@ -747,7 +763,7 @@ pub const Storage = struct {
         const file = try self.dots_dir.openFile(path, .{});
         defer file.close();
 
-        const content = try file.readToEndAlloc(self.allocator, 1024 * 1024);
+        const content = try file.readToEndAlloc(self.allocator, MAX_ISSUE_FILE_SIZE);
         defer self.allocator.free(content);
 
         const parsed = try parseFrontmatter(self.allocator, content);
@@ -839,6 +855,8 @@ pub const Storage = struct {
         for (issue.blocks) |b| try validateId(b);
 
         // Prevent overwriting existing issues
+        // Note: TOCTOU race exists here - concurrent creates may both pass this check.
+        // The atomic write ensures no corruption, but last writer wins.
         if (self.issueExists(issue.id)) {
             return StorageError.IssueAlreadyExists;
         }
@@ -1391,17 +1409,17 @@ pub const Storage = struct {
     fn wouldCreateCycle(self: *Self, from_id: []const u8, to_id: []const u8) !bool {
         // BFS from to_id following blocks dependencies
         // If we reach from_id, cycle would be created
-        var visited = std.StringHashMap(void).init(self.allocator);
-        defer visited.deinit();
 
+        // Use arena for all BFS allocations - single free at end
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+        const alloc = arena.allocator();
+
+        var visited = std.StringHashMap(void).init(alloc);
         var queue: std.ArrayList([]const u8) = .{};
-        defer {
-            for (queue.items) |item| self.allocator.free(item);
-            queue.deinit(self.allocator);
-        }
 
-        const start = try self.allocator.dupe(u8, to_id);
-        try queue.append(self.allocator, start);
+        // Must dupe to_id since it may outlive original
+        try queue.append(alloc, try alloc.dupe(u8, to_id));
 
         // Use index instead of orderedRemove(0) for O(1) dequeue
         var head: usize = 0;
@@ -1421,8 +1439,8 @@ pub const Storage = struct {
 
             for (issue.blocks) |blocker| {
                 if (!visited.contains(blocker)) {
-                    const duped = try self.allocator.dupe(u8, blocker);
-                    try queue.append(self.allocator, duped);
+                    // Must dupe since issue will be freed
+                    try queue.append(alloc, try alloc.dupe(u8, blocker));
                 }
             }
         }
@@ -1449,7 +1467,7 @@ pub const Storage = struct {
         };
         defer file.close();
 
-        const content = try file.readToEndAlloc(self.allocator, 64 * 1024);
+        const content = try file.readToEndAlloc(self.allocator, MAX_CONFIG_SIZE);
         defer self.allocator.free(content);
 
         var lines = std.mem.splitScalar(u8, content, '\n');
@@ -1482,15 +1500,27 @@ pub const Storage = struct {
 
         if (file) |f| {
             defer f.close();
-            const content = try f.readToEndAlloc(self.allocator, 64 * 1024);
+            const content = try f.readToEndAlloc(self.allocator, MAX_CONFIG_SIZE);
             defer self.allocator.free(content);
 
             var lines = std.mem.splitScalar(u8, content, '\n');
             while (lines.next()) |line| {
                 const eq_idx = std.mem.indexOf(u8, line, "=") orelse continue;
                 const k = try self.allocator.dupe(u8, line[0..eq_idx]);
-                const v = try self.allocator.dupe(u8, line[eq_idx + 1 ..]);
-                try config.put(k, v);
+                const v = self.allocator.dupe(u8, line[eq_idx + 1 ..]) catch |err| {
+                    self.allocator.free(k);
+                    return err;
+                };
+                const result = config.fetchPut(k, v) catch |err| {
+                    self.allocator.free(k);
+                    self.allocator.free(v);
+                    return err;
+                };
+                // Free old entry if duplicate key in file
+                if (result) |old| {
+                    self.allocator.free(old.key);
+                    self.allocator.free(old.value);
+                }
             }
         }
 
@@ -1500,7 +1530,9 @@ pub const Storage = struct {
             self.allocator.free(removed.value);
         }
         const k = try self.allocator.dupe(u8, key);
+        errdefer self.allocator.free(k);
         const v = try self.allocator.dupe(u8, value);
+        errdefer self.allocator.free(v);
         try config.put(k, v);
 
         // Build config content
