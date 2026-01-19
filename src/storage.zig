@@ -897,7 +897,7 @@ pub const Storage = struct {
         var states = [_]ResolveState{.{ .prefix = prefix }};
         errdefer states[0].deinit(self.allocator);
 
-        try self.scanResolve(self.dots_dir, states[0..], null);
+        try self.scanResolve(self.dots_dir, states[0..]);
 
         const archive_dir = self.dots_dir.openDir("archive", .{ .iterate = true }) catch |err| switch (err) {
             error.FileNotFound => null,
@@ -906,7 +906,7 @@ pub const Storage = struct {
         if (archive_dir) |*dir| {
             var d = dir.*;
             defer d.close();
-            try self.scanResolve(d, states[0..], null);
+            try self.scanResolve(d, states[0..]);
         }
 
         if (states[0].ambig) return StorageError.AmbiguousId;
@@ -919,7 +919,7 @@ pub const Storage = struct {
         var states = [_]ResolveState{.{ .prefix = prefix }};
         errdefer states[0].deinit(self.allocator);
 
-        try self.scanResolve(self.dots_dir, states[0..], null);
+        try self.scanResolve(self.dots_dir, states[0..]);
 
         if (states[0].ambig) return StorageError.AmbiguousId;
         if (states[0].match == null) return StorageError.IssueNotFound;
@@ -937,7 +937,7 @@ pub const Storage = struct {
             states[i] = .{ .prefix = prefix };
         }
 
-        try self.scanResolve(self.dots_dir, states, null);
+        try self.scanResolve(self.dots_dir, states);
 
         const archive_dir = self.dots_dir.openDir("archive", .{ .iterate = true }) catch |err| switch (err) {
             error.FileNotFound => null,
@@ -946,7 +946,7 @@ pub const Storage = struct {
         if (archive_dir) |*dir| {
             var d = dir.*;
             defer d.close();
-            try self.scanResolve(d, states, null);
+            try self.scanResolve(d, states);
         }
 
         const results = try self.allocator.alloc(ResolveResult, prefixes.len);
@@ -978,23 +978,17 @@ pub const Storage = struct {
         }
     }
 
-    fn scanResolve(self: *Self, dir: fs.Dir, states: []ResolveState, parent_folder: ?[]const u8) !void {
+    fn scanResolve(self: *Self, dir: fs.Dir, states: []ResolveState) !void {
         var iter = dir.iterate();
         while (try iter.next()) |entry| {
             if (entry.kind == .file and std.mem.endsWith(u8, entry.name, ".md")) {
                 const id = entry.name[0 .. entry.name.len - 3];
-                // Skip if this file matches parent folder name (already counted)
-                if (parent_folder) |pf| {
-                    if (std.mem.eql(u8, id, pf)) continue;
-                }
                 try self.addResolve(states, id);
             } else if (entry.kind == .directory and !std.mem.eql(u8, entry.name, "archive")) {
-                // Check folder name as potential ID
-                try self.addResolve(states, entry.name);
-                // Recurse into folder, passing folder name to skip self-reference
+                // Recurse into folder to resolve issue files
                 var subdir = try dir.openDir(entry.name, .{ .iterate = true });
                 defer subdir.close();
-                try self.scanResolve(subdir, states, entry.name);
+                try self.scanResolve(subdir, states);
             }
         }
     }

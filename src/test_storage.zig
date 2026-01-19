@@ -222,6 +222,38 @@ test "storage: ambiguous ID prefix errors" {
     try std.testing.expectError(error.AmbiguousId, result);
 }
 
+test "storage: resolve ignores parent folders without issue file" {
+    const allocator = std.testing.allocator;
+
+    const test_dir = setupTestDirOrPanic(allocator);
+    defer cleanupTestDirAndFree(allocator, test_dir);
+
+    var ts = openTestStorage(allocator, test_dir);
+    defer ts.deinit();
+
+    const parent = makeTestIssue("parent-aaa", .open);
+    ts.storage.createIssue(parent, null) catch |err| {
+        std.debug.panic("create parent: {}", .{err});
+    };
+
+    const child = makeTestIssue("child-bbb", .open);
+    ts.storage.createIssue(child, "parent-aaa") catch |err| {
+        std.debug.panic("create child: {}", .{err});
+    };
+
+    const grandchild = makeTestIssue("grandchild-ccc", .open);
+    ts.storage.createIssue(grandchild, "child-bbb") catch |err| {
+        std.debug.panic("create grandchild: {}", .{err});
+    };
+
+    const resolved = ts.storage.resolveIdActive("child-bbb") catch |err| {
+        std.debug.panic("resolve: {}", .{err});
+    };
+    defer allocator.free(resolved);
+
+    try std.testing.expectEqualStrings("child-bbb", resolved);
+}
+
 test "storage: missing required frontmatter fields rejected" {
     const allocator = std.testing.allocator;
 
