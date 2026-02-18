@@ -852,7 +852,7 @@ pub fn getOrCreatePrefix(allocator: Allocator, storage: *Storage) ![]const u8 {
     const basename = fs.path.basename(path);
 
     // Strip trailing hyphens
-    var prefix = std.mem.trimRight(u8, basename, "-");
+    var prefix = std.mem.trimEnd(u8, basename, "-");
     if (prefix.len == 0) prefix = "dot";
 
     // Store it in config for future use
