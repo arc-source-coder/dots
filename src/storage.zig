@@ -225,7 +225,7 @@ pub const Issue = struct {
         };
     }
 
-    pub fn deinit(self: *const Issue, allocator: Allocator) void {
+    pub fn deinit(self: *Issue, allocator: Allocator) void {
         allocator.free(self.id);
         allocator.free(self.title);
         allocator.free(self.description);
@@ -237,6 +237,7 @@ pub const Issue = struct {
         for (self.blocks) |b| allocator.free(b);
         allocator.free(self.blocks);
         if (self.parent) |p| allocator.free(p);
+        self.* = undefined;
     }
 };
 
@@ -276,10 +277,11 @@ const ResolveState = struct {
 
     fn deinit(self: *ResolveState, allocator: Allocator) void {
         if (self.match) |m| allocator.free(m);
+        self.* = undefined;
     }
 };
 
-pub fn freeIssues(allocator: Allocator, issues: []const Issue) void {
+pub fn freeIssues(allocator: Allocator, issues: []Issue) void {
     for (issues) |*issue| {
         issue.deinit(allocator);
     }
@@ -295,12 +297,13 @@ pub const ChildIssue = struct {
         return Issue.order({}, a.issue, b.issue);
     }
 
-    pub fn deinit(self: *const ChildIssue, allocator: Allocator) void {
+    pub fn deinit(self: *ChildIssue, allocator: Allocator) void {
         self.issue.deinit(allocator);
+        self.* = undefined;
     }
 };
 
-pub fn freeChildIssues(allocator: Allocator, issues: []const ChildIssue) void {
+pub fn freeChildIssues(allocator: Allocator, issues: []ChildIssue) void {
     for (issues) |*issue| {
         issue.deinit(allocator);
     }
@@ -339,10 +342,11 @@ const ParseResult = struct {
     allocated_blocks: [][]const u8,
     allocated_title: ?[]const u8 = null,
 
-    pub fn deinit(self: *const ParseResult, allocator: Allocator) void {
+    pub fn deinit(self: *ParseResult, allocator: Allocator) void {
         if (self.allocated_title) |t| allocator.free(t);
         for (self.allocated_blocks) |b| allocator.free(b);
         allocator.free(self.allocated_blocks);
+        self.* = undefined;
     }
 };
 
@@ -1332,7 +1336,7 @@ pub const Storage = struct {
                     const child_id = entry.name[0 .. entry.name.len - 3];
                     if (std.mem.eql(u8, child_id, id)) continue; // Skip self
 
-                    const child_issue = try self.getIssue(child_id) orelse continue;
+                    var child_issue = try self.getIssue(child_id) orelse continue;
                     defer child_issue.deinit(self.allocator);
 
                     if (child_issue.status != .closed) {
@@ -1424,7 +1428,7 @@ pub const Storage = struct {
         }
 
         // Get the issue
-        const issue = try self.getIssue(old_id) orelse return StorageError.IssueNotFound;
+        var issue = try self.getIssue(old_id) orelse return StorageError.IssueNotFound;
         defer issue.deinit(self.allocator);
 
         // Find current path
@@ -1651,7 +1655,7 @@ pub const Storage = struct {
                 } else entry.name;
 
                 // Only skip expected parsing errors; propagate IO/allocation errors
-                const issue = self.readIssueFromPath(path, id) catch |err| switch (err) {
+                var issue = self.readIssueFromPath(path, id) catch |err| switch (err) {
                     StorageError.InvalidFrontmatter, StorageError.InvalidStatus => continue, // Malformed file, skip
                     else => return err, // IO/allocation errors must propagate
                 };
@@ -1762,7 +1766,7 @@ pub const Storage = struct {
             var path_buf: [MAX_PATH_LEN]u8 = undefined;
             const child_fmt_result = std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ folder_name, entry.name });
             const path = child_fmt_result catch return StorageError.IoError;
-            const issue = self.readIssueFromPath(path, id) catch |err| switch (err) {
+            var issue = self.readIssueFromPath(path, id) catch |err| switch (err) {
                 StorageError.InvalidFrontmatter, StorageError.InvalidStatus => continue,
                 error.FileNotFound => continue,
                 else => return err,
@@ -1789,7 +1793,7 @@ pub const Storage = struct {
             if (entry.kind == .file and std.mem.endsWith(u8, entry.name, ".md")) {
                 if (issues) |list| {
                     const id = entry.name[0 .. entry.name.len - 3];
-                    const issue = self.readIssueFromPath(entry.name, id) catch |err| switch (err) {
+                    var issue = self.readIssueFromPath(entry.name, id) catch |err| switch (err) {
                         StorageError.InvalidFrontmatter, StorageError.InvalidStatus => continue,
                         else => return err,
                     };
@@ -1805,7 +1809,7 @@ pub const Storage = struct {
                 var path_buf: [MAX_PATH_LEN]u8 = undefined;
                 const parent_fmt_result = std.fmt.bufPrint(&path_buf, "{s}/{s}.md", .{ entry.name, entry.name });
                 const path = parent_fmt_result catch return StorageError.IoError;
-                const issue = self.readIssueFromPath(path, entry.name) catch |err| switch (err) {
+                var issue = self.readIssueFromPath(path, entry.name) catch |err| switch (err) {
                     StorageError.InvalidFrontmatter, StorageError.InvalidStatus, error.FileNotFound => {
                         if (orphans) |list| {
                             const name = try self.allocator.dupe(u8, entry.name);
@@ -1951,7 +1955,7 @@ pub const Storage = struct {
                 const entry_fmt_result = std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ parent_id, entry.name });
                 const path = entry_fmt_result catch return StorageError.IoError;
 
-                const issue = self.readIssueFromPath(path, id) catch |err| switch (err) {
+                var issue = self.readIssueFromPath(path, id) catch |err| switch (err) {
                     StorageError.InvalidFrontmatter, StorageError.InvalidStatus => continue,
                     else => return err,
                 };
@@ -2022,7 +2026,7 @@ pub const Storage = struct {
             return err;
         };
 
-        for (all_issues) |issue| {
+        for (all_issues) |*issue| { // *
             const in_title = containsIgnoreCase(issue.title, query);
             const in_desc = containsIgnoreCase(issue.description, query);
             const in_reason = if (issue.close_reason) |r| containsIgnoreCase(r, query) else false;
@@ -2030,7 +2034,7 @@ pub const Storage = struct {
             const in_closed = if (issue.closed_at) |c| containsIgnoreCase(c, query) else false;
 
             if (in_title or in_desc or in_reason or in_created or in_closed) {
-                matches.appendAssumeCapacity(issue);
+                matches.appendAssumeCapacity(issue.*);
             } else {
                 issue.deinit(self.allocator);
             }
@@ -2151,7 +2155,7 @@ pub const Storage = struct {
             if (visited.contains(current)) continue;
             try visited.put(current, {});
 
-            const issue = try self.getIssue(current) orelse continue;
+            var issue = try self.getIssue(current) orelse continue;
             defer issue.deinit(self.allocator);
 
             for (issue.blocks) |blocker| {

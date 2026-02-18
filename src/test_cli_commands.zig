@@ -474,20 +474,20 @@ test "cli: jsonl hydration imports issues and archives closed" {
     var ts = openTestStorage(allocator, test_dir);
     defer ts.deinit();
 
-    const parent = ts.storage.getIssue("parent") catch |err| {
+    var parent = ts.storage.getIssue("parent") catch |err| {
         std.debug.panic("parent: {}", .{err});
     };
     defer parent.?.deinit(allocator);
     try std.testing.expect(parent != null);
 
-    const child = ts.storage.getIssue("child") catch |err| {
+    var child = ts.storage.getIssue("child") catch |err| {
         std.debug.panic("child: {}", .{err});
     };
     defer child.?.deinit(allocator);
     try std.testing.expect(child != null);
     try std.testing.expectEqualStrings("parent", child.?.parent.?);
 
-    const blocked = ts.storage.getIssue("blocked") catch |err| {
+    var blocked = ts.storage.getIssue("blocked") catch |err| {
         std.debug.panic("blocked: {}", .{err});
     };
     defer blocked.?.deinit(allocator);
@@ -495,7 +495,7 @@ test "cli: jsonl hydration imports issues and archives closed" {
     try std.testing.expectEqual(@as(usize, 1), blocked.?.blocks.len);
     try std.testing.expectEqualStrings("blocker", blocked.?.blocks[0]);
 
-    const closed = ts.storage.getIssue("closed") catch |err| {
+    var closed = ts.storage.getIssue("closed") catch |err| {
         std.debug.panic("closed: {}", .{err});
     };
     defer closed.?.deinit(allocator);

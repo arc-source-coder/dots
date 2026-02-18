@@ -129,7 +129,7 @@ test "storage: delete parent cleans up child dependency refs" {
     try std.testing.expectEqualStrings("external", ready2[0].id);
 
     // Verify external's blocks array is now empty
-    const ext = try ts.storage.getIssue("external") orelse return error.TestUnexpectedResult;
+    var ext = try ts.storage.getIssue("external") orelse return error.TestUnexpectedResult;
     defer ext.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 0), ext.blocks.len);
 }

@@ -306,6 +306,7 @@ pub const TestStorage = struct {
     pub fn deinit(self: *TestStorage) void {
         self.storage.close();
         self.original_dir.setAsCwd() catch {};
+        self.* = undefined;
     }
 };
 

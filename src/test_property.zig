@@ -499,7 +499,7 @@ test "prop: lifecycle simulation maintains invariants" {
             for (0..LifecycleOracle.MAX_ISSUES) |i| {
                 if (oracle.exists[i] and !oracle.archived[i]) {
                     const maybe_issue = ts.storage.getIssue(ids[i].?) catch return false;
-                    const issue = maybe_issue orelse return false;
+                    var issue = maybe_issue orelse return false;
                     defer issue.deinit(allocator);
                     if (issue.status != oracle.statuses[i]) return false;
                     // Closed issues must have closed_at
@@ -775,7 +775,7 @@ test "prop: status transition state machine" {
 
                 // Verify invariant after each transition
                 const maybe_current = ts.storage.getIssue("transition-test") catch return false;
-                const current = maybe_current orelse return false;
+                var current = maybe_current orelse return false;
                 defer current.deinit(allocator);
 
                 // Invariant: closed_at set iff status is closed

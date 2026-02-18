@@ -491,7 +491,7 @@ fn cmdShow(allocator: Allocator, args: []const []const u8) !void {
     const resolved = resolveIdOrFatal(&storage, args[0]);
     defer allocator.free(resolved);
 
-    const iss = try storage.getIssue(resolved) orelse fatal("Issue not found: {s}\n", .{args[0]});
+    var iss = try storage.getIssue(resolved) orelse fatal("Issue not found: {s}\n", .{args[0]});
     defer iss.deinit(allocator);
 
     const w = stdout();
@@ -541,7 +541,7 @@ fn cmdTree(allocator: Allocator, args: []const []const u8) !void {
         const resolved = resolveIdActiveOrFatal(&storage, args[0]);
         defer allocator.free(resolved);
 
-        const root = try storage.getIssue(resolved) orelse fatal("Issue not found: {s}\n", .{args[0]});
+        var root = try storage.getIssue(resolved) orelse fatal("Issue not found: {s}\n", .{args[0]});
         defer root.deinit(allocator);
 
         try w.print("[{s}] {s} {s}\n", .{ root.id, root.status.symbol(), root.title });
