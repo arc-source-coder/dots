@@ -148,7 +148,7 @@ pub fn runDotWithInput(
     errdefer allocator.free(stderr);
     const term = try child.wait();
 
-    return RunResult{ .stdout = stdout, .stderr = stderr, .term = term };
+    return .{ .stdout = stdout, .stderr = stderr, .term = term };
 }
 
 /// Multi-process test harness for concurrent operations
@@ -295,7 +295,7 @@ pub const TestStorage = struct {
             return err;
         };
 
-        return TestStorage{
+        return .{
             .storage = storage,
             .original_dir = original_dir,
             .test_dir_path = test_dir,
@@ -352,7 +352,7 @@ pub fn isExitCode(term: std.process.Child.Term, code: u8) bool {
 }
 
 pub fn makeTestIssue(id: []const u8, status: Status) Issue {
-    return Issue{
+    return .{
         .id = id,
         .title = id,
         .description = "",

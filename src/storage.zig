@@ -209,7 +209,7 @@ pub const Issue = struct {
         const parent = if (self.parent) |p| try allocator.dupe(u8, p) else null;
         errdefer if (parent) |p| allocator.free(p);
 
-        return Issue{
+        return .{
             .id = id,
             .title = title,
             .description = description,
@@ -513,7 +513,7 @@ fn parseFrontmatter(allocator: Allocator, content: []const u8) !ParseResult {
         return StorageError.InvalidFrontmatter;
     }
 
-    return ParseResult{
+    return .{
         .frontmatter = fm,
         .description = description,
         .allocated_blocks = allocated_blocks,
@@ -882,7 +882,7 @@ pub const Storage = struct {
 
         const dots_dir = try fs.cwd().openDir(DOTS_DIR, .{ .iterate = true });
 
-        return Self{
+        return .{
             .allocator = allocator,
             .dots_dir = dots_dir,
         };
@@ -1135,7 +1135,7 @@ pub const Storage = struct {
 
         // Mark blocks as transferred (will be owned by Issue)
         blocks_transferred = true;
-        return Issue{
+        return .{
             .id = issue_id,
             .title = title,
             .description = description,
@@ -1847,7 +1847,7 @@ pub const Storage = struct {
             files += moved;
         }
 
-        return FixResult{
+        return .{
             .folders = folders,
             .files = files,
         };
