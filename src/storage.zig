@@ -1089,6 +1089,7 @@ pub const Storage = struct {
         };
         defer self.allocator.free(path);
 
+        // ziglint-ignore: Z017 (false positive: readIssueFromPath returns !Issue but getIssue returns !?Issue)
         return try self.readIssueFromPath(path, id);
     }
 
@@ -1167,6 +1168,7 @@ pub const Storage = struct {
                 const rest = path[idx + 1 ..];
                 const next_slash = std.mem.indexOf(u8, rest, "/");
                 if (next_slash) |next_idx| {
+                    // ziglint-ignore: Z017 (false positive: dupe returns ![]u8 but function returns !?[]const u8)
                     return try self.allocator.dupe(u8, rest[0..next_idx]);
                 }
                 return null;
@@ -1175,6 +1177,7 @@ pub const Storage = struct {
             const filename = std.fs.path.basename(path);
             const file_id = filename[0 .. filename.len - 3]; // strip .md
             if (!std.mem.eql(u8, file_id, potential_parent)) {
+                // ziglint-ignore: Z017 (false positive: dupe returns ![]u8 but function returns !?[]const u8)
                 return try self.allocator.dupe(u8, potential_parent);
             }
         }
@@ -1977,7 +1980,7 @@ pub const Storage = struct {
         var status_by_id = try self.buildStatusMap(all_issues);
         defer status_by_id.deinit();
 
-        return try self.getChildrenWithStatusMap(parent_id, &status_by_id);
+        return self.getChildrenWithStatusMap(parent_id, &status_by_id);
     }
 
     // ziglint-ignore: Z024
@@ -2194,6 +2197,7 @@ pub const Storage = struct {
         while (lines.next()) |line| {
             const eq_idx = std.mem.indexOf(u8, line, "=") orelse continue;
             if (std.mem.eql(u8, line[0..eq_idx], key)) {
+                // ziglint-ignore: Z017 (false positive: dupe returns ![]u8 but function returns !?[]const u8)
                 return try self.allocator.dupe(u8, line[eq_idx + 1 ..]);
             }
         }
