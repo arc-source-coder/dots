@@ -1,5 +1,2 @@
-opensrc
-
 .zig-cache/
 zig-out/
-SESSION.md

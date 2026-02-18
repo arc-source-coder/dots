@@ -18,8 +18,11 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    // Link libc for @cImport of time.h (localtime_r)
-    exe.linkLibC();
+    const zeit = b.dependency("zeit", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    exe.root_module.addImport("zeit", zeit.module("zeit"));
 
     const options = b.addOptions();
     options.addOption([]const u8, "version", version);

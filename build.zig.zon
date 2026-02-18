@@ -4,6 +4,7 @@
     .dependencies = .{
         .ohsnap = .{ .url = "https://github.com/mnemnion/ohsnap/archive/refs/tags/v0.4.3.tar.gz", .hash = "ohsnap-0.4.2-iWxzyg2fAADV1p8ahYk7KG6J9xy4Rl6ld53r9g0HV74K" },
         .zcheck = .{ .path = "deps/zcheck" },
+        .zeit = .{ .path = "deps/zeit" },
     },
     .paths = .{""},
     .fingerprint = 0x54d4af2155671ed5,

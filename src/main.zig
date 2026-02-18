@@ -4,9 +4,7 @@ const Allocator = std.mem.Allocator;
 const storage_mod = @import("storage.zig");
 const build_options = @import("build_options");
 
-const libc = @cImport({
-    @cInclude("time.h");
-});
+const zeit = @import("zeit");
 
 const Storage = storage_mod.Storage;
 const Issue = storage_mod.Issue;
@@ -303,7 +301,7 @@ fn cmdAdd(allocator: Allocator, args: []const []const u8) !void {
     defer allocator.free(id);
 
     var ts_buf: [40]u8 = undefined;
-    const now = try formatTimestamp(&ts_buf);
+    const now = try formatTimestamp(allocator, &ts_buf);
 
     // Handle after dependency (blocks)
     var blocks: []const []const u8 = &.{};
@@ -450,7 +448,7 @@ fn cmdOff(allocator: Allocator, args: []const []const u8) !void {
     defer storage_mod.freeResolveResults(allocator, results);
 
     var ts_buf: [40]u8 = undefined;
-    const now = try formatTimestamp(&ts_buf);
+    const now = try formatTimestamp(allocator, &ts_buf);
 
     for (results, 0..) |result, idx| {
         switch (result) {
@@ -647,7 +645,7 @@ fn cmdUpdate(allocator: Allocator, args: []const []const u8) !void {
     defer allocator.free(resolved);
 
     var ts_buf: [40]u8 = undefined;
-    const closed_at: ?[]const u8 = if (status == .closed) try formatTimestamp(&ts_buf) else null;
+    const closed_at: ?[]const u8 = if (status == .closed) try formatTimestamp(allocator, &ts_buf) else null;
 
     storage.updateStatus(resolved, status, closed_at, null) catch |err| switch (err) {
         error.ChildrenNotClosed => fatal("Cannot close: children are not all closed\n", .{}),
@@ -671,7 +669,7 @@ fn cmdClose(allocator: Allocator, args: []const []const u8) !void {
     defer allocator.free(resolved);
 
     var ts_buf: [40]u8 = undefined;
-    const now = try formatTimestamp(&ts_buf);
+    const now = try formatTimestamp(allocator, &ts_buf);
 
     storage.updateStatus(resolved, .closed, now, reason) catch |err| switch (err) {
         error.ChildrenNotClosed => fatal("Cannot close: children are not all closed\n", .{}),
@@ -767,37 +765,15 @@ fn slugifyIssue(
     return true;
 }
 
-fn formatTimestamp(buf: []u8) ![]const u8 {
-    const nanos = std.time.nanoTimestamp();
-    if (nanos < 0) return error.InvalidTimestamp;
-    const epoch_nanos: u128 = @intCast(nanos);
-    const epoch_secs: libc.time_t = std.math.cast(
-        libc.time_t,
-        epoch_nanos / 1_000_000_000,
-    ) orelse return error.TimestampOverflow;
-    const micros: u64 = @intCast((epoch_nanos % 1_000_000_000) / 1000);
+fn formatTimestamp(allocator: Allocator, buf: []u8) ![]const u8 {
+    var env = try std.process.getEnvMap(allocator);
+    defer env.deinit();
 
-    var tm: libc.struct_tm = undefined;
-    if (libc.localtime_r(&epoch_secs, &tm) == null) {
-        return error.LocaltimeFailed;
-    }
+    const local_tz = try zeit.local(allocator, &env);
+    defer local_tz.deinit();
 
-    const year: u64 = @intCast(tm.tm_year + 1900);
-    const month: u64 = @intCast(tm.tm_mon + 1);
-    const day: u64 = @intCast(tm.tm_mday);
-    const hours: u64 = @intCast(tm.tm_hour);
-    const mins: u64 = @intCast(tm.tm_min);
-    const secs: u64 = @intCast(tm.tm_sec);
-
-    const tz_offset_secs: i64 = tm.tm_gmtoff;
-    const tz_sign: u8 = if (tz_offset_secs >= 0) '+' else '-';
-    const tz_abs: u64 = @abs(tz_offset_secs);
-    const tz_hours_abs: u64 = tz_abs / 3600;
-    const tz_mins: u64 = (tz_abs % 3600) / 60;
-
-    return std.fmt.bufPrint(buf, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}.{d:0>6}{c}{d:0>2}:{d:0>2}", .{
-        year, month, day, hours, mins, secs, micros, tz_sign, tz_hours_abs, tz_mins,
-    });
+    const now = try zeit.instant(.{ .timezone = &local_tz });
+    return now.time().bufPrint(buf, .rfc3339);
 }
 
 const JsonIssue = struct {
