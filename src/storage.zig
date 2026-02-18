@@ -1024,7 +1024,8 @@ pub const Storage = struct {
         } else |_| {}
 
         // Try archive folder: .dots/archive/{id}/{id}.md
-        const archive_folder_path = std.fmt.bufPrint(&path_buf, "archive/{s}/{s}.md", .{ id, id }) catch return StorageError.IoError;
+        const archive_fmt_result = std.fmt.bufPrint(&path_buf, "archive/{s}/{s}.md", .{ id, id });
+        const archive_folder_path = archive_fmt_result catch return StorageError.IoError;
         if (self.dots_dir.statFile(archive_folder_path)) |_| {
             return self.allocator.dupe(u8, archive_folder_path);
         } else |_| {}
@@ -1063,7 +1064,8 @@ pub const Storage = struct {
 
                 // Recurse with depth limit
                 if (try self.searchForIssueWithDepth(subdir, id, depth + 1)) |path| {
-                    const full_path = std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ entry.name, path }) catch |err| {
+                    const full_path_fmt_result = std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ entry.name, path });
+                    const full_path = full_path_fmt_result catch |err| {
                         self.allocator.free(path);
                         return err;
                     };
@@ -1200,12 +1202,16 @@ pub const Storage = struct {
         } else blk: {
             // Check if a folder with this ID exists (child created before parent)
             const stat = self.dots_dir.statFile(issue.id) catch |err| switch (err) {
-                error.FileNotFound => break :blk std.fmt.bufPrint(&path_buf, "{s}.md", .{issue.id}) catch return StorageError.IoError,
+                error.FileNotFound => {
+                    const fmt_result = std.fmt.bufPrint(&path_buf, "{s}.md", .{issue.id});
+                    break :blk fmt_result catch return StorageError.IoError;
+                },
                 else => return err,
             };
             if (stat.kind == .directory) {
                 // Folder exists - write to {id}/{id}.md
-                break :blk std.fmt.bufPrint(&path_buf, "{s}/{s}.md", .{ issue.id, issue.id }) catch return StorageError.IoError;
+                const fmt_result = std.fmt.bufPrint(&path_buf, "{s}/{s}.md", .{ issue.id, issue.id });
+                break :blk fmt_result catch return StorageError.IoError;
             }
             break :blk std.fmt.bufPrint(&path_buf, "{s}.md", .{issue.id}) catch return StorageError.IoError;
         };
@@ -1216,15 +1222,17 @@ pub const Storage = struct {
     fn ensureParentFolder(self: *Self, parent_id: []const u8) !void {
         var path_buf: [MAX_PATH_LEN]u8 = undefined;
 
+        const old_fmt_result = std.fmt.bufPrint(&path_buf, "{s}.md", .{parent_id});
+        const old_path = old_fmt_result catch return StorageError.IoError;
+
+        var new_path_buf: [MAX_PATH_LEN]u8 = undefined;
+        const new_fmt_result = std.fmt.bufPrint(&new_path_buf, "{s}/{s}.md", .{ parent_id, parent_id });
+        const new_path = new_fmt_result catch return StorageError.IoError;
+
         // Check if parent is already a folder
         self.dots_dir.makeDir(parent_id) catch |err| switch (err) {
             error.PathAlreadyExists => {
                 // Folder exists - check if parent.md exists in root and move it
-                const old_path = std.fmt.bufPrint(&path_buf, "{s}.md", .{parent_id}) catch return StorageError.IoError;
-
-                var new_path_buf: [MAX_PATH_LEN]u8 = undefined;
-                const new_path = std.fmt.bufPrint(&new_path_buf, "{s}/{s}.md", .{ parent_id, parent_id }) catch return StorageError.IoError;
-
                 self.dots_dir.rename(old_path, new_path) catch |err2| switch (err2) {
                     error.FileNotFound => {}, // Parent file not in root, already correct
                     else => return err2,
@@ -1235,18 +1243,19 @@ pub const Storage = struct {
         };
 
         // Folder created - need to move parent.md into it
-        const old_path = std.fmt.bufPrint(&path_buf, "{s}.md", .{parent_id}) catch return StorageError.IoError;
-
-        var new_path_buf: [MAX_PATH_LEN]u8 = undefined;
-        const new_path = std.fmt.bufPrint(&new_path_buf, "{s}/{s}.md", .{ parent_id, parent_id }) catch return StorageError.IoError;
-
         self.dots_dir.rename(old_path, new_path) catch |err| switch (err) {
             error.FileNotFound => {}, // Parent file doesn't exist yet, that's fine
             else => return err,
         };
     }
 
-    pub fn updateStatus(self: *Self, id: []const u8, status: Status, closed_at: ?[]const u8, close_reason: ?[]const u8) !void {
+    pub fn updateStatus(
+        self: *Self,
+        id: []const u8,
+        status: Status,
+        closed_at: ?[]const u8,
+        close_reason: ?[]const u8,
+    ) !void {
         const path = try self.findIssuePath(id);
         defer self.allocator.free(path);
 
@@ -1275,7 +1284,8 @@ pub const Storage = struct {
         else
             null;
 
-        const content = try serializeFrontmatter(self.allocator, issue.withStatus(status, effective_closed_at, effective_close_reason));
+        const updated = issue.withStatus(status, effective_closed_at, effective_close_reason);
+        const content = try serializeFrontmatter(self.allocator, updated);
         defer self.allocator.free(content);
 
         try writeFileAtomic(self.dots_dir, path, content);
@@ -1333,12 +1343,14 @@ pub const Storage = struct {
 
             // All children closed, move entire folder
             var archive_path_buf: [MAX_PATH_LEN]u8 = undefined;
-            const archive_path = std.fmt.bufPrint(&archive_path_buf, "archive/{s}", .{folder_name}) catch return StorageError.IoError;
+            const archive_fmt_result = std.fmt.bufPrint(&archive_path_buf, "archive/{s}", .{folder_name});
+            const archive_path = archive_fmt_result catch return StorageError.IoError;
             try self.dots_dir.rename(folder_name, archive_path);
         } else {
             // Simple file, move to archive
             var archive_path_buf: [MAX_PATH_LEN]u8 = undefined;
-            const archive_path = std.fmt.bufPrint(&archive_path_buf, "archive/{s}", .{path}) catch return StorageError.IoError;
+            const archive_fmt_result = std.fmt.bufPrint(&archive_path_buf, "archive/{s}", .{path});
+            const archive_path = archive_fmt_result catch return StorageError.IoError;
             try self.dots_dir.rename(path, archive_path);
         }
     }
@@ -1447,14 +1459,16 @@ pub const Storage = struct {
         if (is_parent) {
             // Parent issue: rename folder and file inside
             var new_path_buf: [MAX_PATH_LEN]u8 = undefined;
-            const new_path = std.fmt.bufPrint(&new_path_buf, "{s}/{s}.md", .{ new_id, new_id }) catch return StorageError.IoError;
+            const new_fmt_result = std.fmt.bufPrint(&new_path_buf, "{s}/{s}.md", .{ new_id, new_id });
+            const new_path = new_fmt_result catch return StorageError.IoError;
 
             // Rename folder first
             try self.dots_dir.rename(old_id, new_id);
 
             // Write new content to new path (old file was renamed with folder)
-            var old_file_in_new_folder_buf: [MAX_PATH_LEN]u8 = undefined;
-            const old_file_in_new_folder = std.fmt.bufPrint(&old_file_in_new_folder_buf, "{s}/{s}.md", .{ new_id, old_id }) catch return StorageError.IoError;
+            var old_file_new_folder_buf: [MAX_PATH_LEN]u8 = undefined;
+            const old_file_fmt_result = std.fmt.bufPrint(&old_file_new_folder_buf, "{s}/{s}.md", .{ new_id, old_id });
+            const old_file_in_new_folder = old_file_fmt_result catch return StorageError.IoError;
 
             // Write new file before deleting old
             try writeFileAtomic(self.dots_dir, new_path, content);
@@ -1466,9 +1480,11 @@ pub const Storage = struct {
             // Simple file or child: just rename
             var new_path_buf: [MAX_PATH_LEN]u8 = undefined;
             const new_path = if (issue.parent) |parent| blk: {
-                break :blk std.fmt.bufPrint(&new_path_buf, "{s}/{s}.md", .{ parent, new_id }) catch return StorageError.IoError;
+                const child_fmt_result = std.fmt.bufPrint(&new_path_buf, "{s}/{s}.md", .{ parent, new_id });
+                break :blk child_fmt_result catch return StorageError.IoError;
             } else blk: {
-                break :blk std.fmt.bufPrint(&new_path_buf, "{s}.md", .{new_id}) catch return StorageError.IoError;
+                const root_fmt_result = std.fmt.bufPrint(&new_path_buf, "{s}.md", .{new_id});
+                break :blk root_fmt_result catch return StorageError.IoError;
             };
 
             // Write new file first, then delete old
@@ -1617,16 +1633,22 @@ pub const Storage = struct {
         return issues.toOwnedSlice(self.allocator);
     }
 
-    fn collectIssuesFromDir(self: *Self, dir: fs.Dir, prefix: []const u8, status_filter: ?Status, issues: *std.ArrayList(Issue)) !void {
+    fn collectIssuesFromDir(
+        self: *Self,
+        dir: fs.Dir,
+        prefix: []const u8,
+        status_filter: ?Status,
+        issues: *std.ArrayList(Issue),
+    ) !void {
         var iter = dir.iterate();
         while (try iter.next()) |entry| {
             if (entry.kind == .file and std.mem.endsWith(u8, entry.name, ".md")) {
                 const id = entry.name[0 .. entry.name.len - 3];
                 var path_buf: [MAX_PATH_LEN]u8 = undefined;
-                const path = if (prefix.len > 0)
-                    std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ prefix, entry.name }) catch return StorageError.IoError
-                else
-                    entry.name;
+                const path = if (prefix.len > 0) blk: {
+                    const path_fmt_result = std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ prefix, entry.name });
+                    break :blk path_fmt_result catch return StorageError.IoError;
+                } else entry.name;
 
                 // Only skip expected parsing errors; propagate IO/allocation errors
                 const issue = self.readIssueFromPath(path, id) catch |err| switch (err) {
@@ -1650,10 +1672,10 @@ pub const Storage = struct {
                 defer subdir.close();
 
                 var sub_prefix_buf: [MAX_PATH_LEN]u8 = undefined;
-                const sub_prefix = if (prefix.len > 0)
-                    std.fmt.bufPrint(&sub_prefix_buf, "{s}/{s}", .{ prefix, entry.name }) catch return StorageError.IoError
-                else
-                    entry.name;
+                const sub_prefix = if (prefix.len > 0) blk: {
+                    const prefix_fmt_result = std.fmt.bufPrint(&sub_prefix_buf, "{s}/{s}", .{ prefix, entry.name });
+                    break :blk prefix_fmt_result catch return StorageError.IoError;
+                } else entry.name;
 
                 try self.collectIssuesFromDir(subdir, sub_prefix, status_filter, issues);
             }
@@ -1738,7 +1760,8 @@ pub const Storage = struct {
             if (std.mem.eql(u8, id, folder_name)) continue;
 
             var path_buf: [MAX_PATH_LEN]u8 = undefined;
-            const path = std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ folder_name, entry.name }) catch return StorageError.IoError;
+            const child_fmt_result = std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ folder_name, entry.name });
+            const path = child_fmt_result catch return StorageError.IoError;
             const issue = self.readIssueFromPath(path, id) catch |err| switch (err) {
                 StorageError.InvalidFrontmatter, StorageError.InvalidStatus => continue,
                 error.FileNotFound => continue,
@@ -1780,7 +1803,8 @@ pub const Storage = struct {
             } else if (entry.kind == .directory and !std.mem.eql(u8, entry.name, "archive")) {
                 // Folder = parent issue
                 var path_buf: [MAX_PATH_LEN]u8 = undefined;
-                const path = std.fmt.bufPrint(&path_buf, "{s}/{s}.md", .{ entry.name, entry.name }) catch return StorageError.IoError;
+                const parent_fmt_result = std.fmt.bufPrint(&path_buf, "{s}/{s}.md", .{ entry.name, entry.name });
+                const path = parent_fmt_result catch return StorageError.IoError;
                 const issue = self.readIssueFromPath(path, entry.name) catch |err| switch (err) {
                     StorageError.InvalidFrontmatter, StorageError.InvalidStatus, error.FileNotFound => {
                         if (orphans) |list| {
@@ -1882,7 +1906,8 @@ pub const Storage = struct {
 
         for (names.items) |name| {
             var src_buf: [MAX_PATH_LEN]u8 = undefined;
-            const src = std.fmt.bufPrint(&src_buf, "{s}/{s}", .{ folder_name, name }) catch return StorageError.IoError;
+            const src_fmt_result = std.fmt.bufPrint(&src_buf, "{s}/{s}", .{ folder_name, name });
+            const src = src_fmt_result catch return StorageError.IoError;
             self.dots_dir.rename(src, name) catch |err| switch (err) {
                 error.PathAlreadyExists => return StorageError.IssueAlreadyExists,
                 else => return err,
@@ -1923,7 +1948,8 @@ pub const Storage = struct {
                 if (std.mem.eql(u8, id, parent_id)) continue; // Skip parent itself
 
                 var path_buf: [MAX_PATH_LEN]u8 = undefined;
-                const path = std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ parent_id, entry.name }) catch return StorageError.IoError;
+                const entry_fmt_result = std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ parent_id, entry.name });
+                const path = entry_fmt_result catch return StorageError.IoError;
 
                 const issue = self.readIssueFromPath(path, id) catch |err| switch (err) {
                     StorageError.InvalidFrontmatter, StorageError.InvalidStatus => continue,

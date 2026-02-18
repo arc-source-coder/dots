@@ -248,9 +248,15 @@ fn cmdInit(allocator: Allocator, args: []const []const u8) !void {
     while (i < args.len) : (i += 1) {
         if (getArg(args, &i, "--from-jsonl")) |jsonl_path| {
             const result = try hydrateFromJsonl(allocator, &storage, jsonl_path);
-            if (result.imported > 0) try stdout().print("Imported {d} issues from {s}\n", .{ result.imported, jsonl_path });
-            if (result.skipped > 0) try stderr().print("Warning: skipped {d} issues due to errors\n", .{result.skipped});
-            if (result.dep_skipped > 0) try stderr().print("Warning: skipped {d} dependencies due to errors\n", .{result.dep_skipped});
+            if (result.imported > 0) {
+                try stdout().print("Imported {d} issues from {s}\n", .{ result.imported, jsonl_path });
+            }
+            if (result.skipped > 0) {
+                try stderr().print("Warning: skipped {d} issues due to errors\n", .{result.skipped});
+            }
+            if (result.dep_skipped > 0) {
+                try stderr().print("Warning: skipped {d} dependencies due to errors\n", .{result.dep_skipped});
+            }
         }
     }
 
@@ -704,7 +710,13 @@ fn cmdSlugify(allocator: Allocator, _: []const []const u8) !void {
     try gitAddDots(allocator);
 }
 
-fn slugifyIssue(allocator: Allocator, storage: *Storage, prefix: []const u8, old_id: []const u8, title: []const u8) !bool {
+fn slugifyIssue(
+    allocator: Allocator,
+    storage: *Storage,
+    prefix: []const u8,
+    old_id: []const u8,
+    title: []const u8,
+) !bool {
     // Generate new slugified ID
     const slug = try storage_mod.slugify(allocator, title);
     defer allocator.free(slug);
@@ -759,7 +771,10 @@ fn formatTimestamp(buf: []u8) ![]const u8 {
     const nanos = std.time.nanoTimestamp();
     if (nanos < 0) return error.InvalidTimestamp;
     const epoch_nanos: u128 = @intCast(nanos);
-    const epoch_secs: libc.time_t = std.math.cast(libc.time_t, epoch_nanos / 1_000_000_000) orelse return error.TimestampOverflow;
+    const epoch_secs: libc.time_t = std.math.cast(
+        libc.time_t,
+        epoch_nanos / 1_000_000_000,
+    ) orelse return error.TimestampOverflow;
     const micros: u64 = @intCast((epoch_nanos % 1_000_000_000) / 1000);
 
     var tm: libc.struct_tm = undefined;

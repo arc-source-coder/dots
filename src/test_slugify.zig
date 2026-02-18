@@ -70,7 +70,8 @@ test "slugify: truncation at word boundary" {
     const allocator = std.testing.allocator;
 
     // This should be truncated to fit within MAX_SLUG_LEN (32)
-    const slug = try storage_mod.slugify(allocator, "Implement user authentication service with database connection pooling");
+    const long_title = "Implement user authentication service with database connection pooling";
+    const slug = try storage_mod.slugify(allocator, long_title);
     defer allocator.free(slug);
 
     // Should truncate at word boundary
@@ -366,7 +367,8 @@ test "cli: slugify prop: preserves issue count" {
 
             var id_buf: [20]u8 = undefined;
             for (0..n) |i| {
-                const id = std.fmt.bufPrint(&id_buf, "dots-{x:0>8}", .{@as(u32, @intCast(i)) + 0x10000000}) catch return false;
+                const hex_val = @as(u32, @intCast(i)) + 0x10000000;
+                const id = std.fmt.bufPrint(&id_buf, "dots-{x:0>8}", .{hex_val}) catch return false;
                 const issue = makeTestIssue(id, .open);
                 ts.storage.createIssue(issue, null) catch return false;
             }
