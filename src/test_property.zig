@@ -404,13 +404,13 @@ test "prop: lifecycle simulation maintains invariants" {
             defer ts.deinit();
 
             var oracle: LifecycleOracle = .{};
-            var ids: [LifecycleOracle.MAX_ISSUES]?[]const u8 = [_]?[]const u8{null} ** LifecycleOracle.MAX_ISSUES;
-            var id_storage: [LifecycleOracle.MAX_ISSUES][32]u8 = undefined;
+            var ids: [LifecycleOracle.max_issues]?[]const u8 = [_]?[]const u8{null} ** LifecycleOracle.max_issues;
+            var id_storage: [LifecycleOracle.max_issues][32]u8 = undefined;
 
             // Execute operations
             for (args.ops) |op_data| {
-                const idx = @as(usize, op_data.target) % LifecycleOracle.MAX_ISSUES;
-                const secondary = @as(usize, op_data.secondary) % LifecycleOracle.MAX_ISSUES;
+                const idx = @as(usize, op_data.target) % LifecycleOracle.max_issues;
+                const secondary = @as(usize, op_data.secondary) % LifecycleOracle.max_issues;
                 const op: OpType = switch (op_data.op % 6) {
                     0 => .create,
                     1 => .delete,
@@ -496,7 +496,7 @@ test "prop: lifecycle simulation maintains invariants" {
             }
 
             // 3. Each existing non-archived issue has correct status
-            for (0..LifecycleOracle.MAX_ISSUES) |i| {
+            for (0..LifecycleOracle.max_issues) |i| {
                 if (oracle.exists[i] and !oracle.archived[i]) {
                     const maybe_issue = ts.storage.getIssue(ids[i].?) catch return false;
                     var issue = maybe_issue orelse return false;

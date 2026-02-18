@@ -153,15 +153,15 @@ pub fn runDotWithInput(
 
 /// Multi-process test harness for concurrent operations
 pub const MultiProcess = struct {
-    const MAX_PROCS = 8;
-    const MAX_ARGS = 8;
+    const max_procs = 8;
+    const max_args = 8;
 
     allocator: std.mem.Allocator,
     cwd: []const u8,
-    children: [MAX_PROCS]std.process.Child = undefined,
-    argv_storage: [MAX_PROCS][MAX_ARGS][]const u8 = undefined,
-    argv_lens: [MAX_PROCS]usize = [_]usize{0} ** MAX_PROCS,
-    inputs: [MAX_PROCS]?[]const u8 = [_]?[]const u8{null} ** MAX_PROCS,
+    children: [max_procs]std.process.Child = undefined,
+    argv_storage: [max_procs][max_args][]const u8 = undefined,
+    argv_lens: [max_procs]usize = [_]usize{0} ** max_procs,
+    inputs: [max_procs]?[]const u8 = [_]?[]const u8{null} ** max_procs,
     count: usize = 0,
 
     pub fn init(allocator: std.mem.Allocator, cwd: []const u8) MultiProcess {
@@ -170,8 +170,8 @@ pub const MultiProcess = struct {
 
     /// Add a process to spawn with given args and optional stdin
     pub fn add(self: *MultiProcess, args: []const []const u8, input: ?[]const u8) !void {
-        if (self.count >= MAX_PROCS) return error.TooManyProcesses;
-        if (args.len + 1 > MAX_ARGS) return error.TooManyArgs;
+        if (self.count >= max_procs) return error.TooManyProcesses;
+        if (args.len + 1 > max_args) return error.TooManyArgs;
 
         // Store args in fixed storage
         self.argv_storage[self.count][0] = dot_binary;
@@ -203,8 +203,8 @@ pub const MultiProcess = struct {
     }
 
     /// Wait for all processes and return results
-    pub fn waitAll(self: *MultiProcess) ![MAX_PROCS]?RunResult {
-        var results: [MAX_PROCS]?RunResult = [_]?RunResult{null} ** MAX_PROCS;
+    pub fn waitAll(self: *MultiProcess) ![max_procs]?RunResult {
+        var results: [max_procs]?RunResult = [_]?RunResult{null} ** max_procs;
         errdefer self.freeResults(&results);
         for (0..self.count) |i| {
             const stdout = try self.children[i].stdout.?.readToEndAlloc(self.allocator, max_output_bytes);
@@ -218,7 +218,7 @@ pub const MultiProcess = struct {
     }
 
     /// Check if all processes succeeded (exit code 0)
-    pub fn allSucceeded(results: [MAX_PROCS]?RunResult, count: usize) bool {
+    pub fn allSucceeded(results: [max_procs]?RunResult, count: usize) bool {
         for (0..count) |i| {
             if (results[i]) |r| {
                 if (!isExitCode(r.term, 0)) return false;
@@ -228,7 +228,7 @@ pub const MultiProcess = struct {
     }
 
     /// Free all result memory
-    pub fn freeResults(self: *MultiProcess, results: *[MAX_PROCS]?RunResult) void {
+    pub fn freeResults(self: *MultiProcess, results: *[max_procs]?RunResult) void {
         for (0..self.count) |i| {
             if (results[i]) |r| {
                 self.allocator.free(r.stdout);
@@ -371,17 +371,17 @@ pub fn makeTestIssue(id: []const u8, status: Status) Issue {
 
 // Oracle for full lifecycle: tracks expected state after a sequence of operations
 pub const LifecycleOracle = struct {
-    pub const MAX_ISSUES = 8;
+    pub const max_issues = 8;
 
     // Issue state
-    exists: [MAX_ISSUES]bool = [_]bool{false} ** MAX_ISSUES,
-    statuses: [MAX_ISSUES]Status = [_]Status{.open} ** MAX_ISSUES,
-    priorities: [MAX_ISSUES]u3 = [_]u3{2} ** MAX_ISSUES,
-    has_closed_at: [MAX_ISSUES]bool = [_]bool{false} ** MAX_ISSUES,
-    archived: [MAX_ISSUES]bool = [_]bool{false} ** MAX_ISSUES, // Closed root issues get archived
-    parents: [MAX_ISSUES]?usize = [_]?usize{null} ** MAX_ISSUES,
+    exists: [max_issues]bool = [_]bool{false} ** max_issues,
+    statuses: [max_issues]Status = [_]Status{.open} ** max_issues,
+    priorities: [max_issues]u3 = [_]u3{2} ** max_issues,
+    has_closed_at: [max_issues]bool = [_]bool{false} ** max_issues,
+    archived: [max_issues]bool = [_]bool{false} ** max_issues, // Closed root issues get archived
+    parents: [max_issues]?usize = [_]?usize{null} ** max_issues,
     // deps[i][j] = true means i depends on j (j blocks i)
-    deps: [MAX_ISSUES][MAX_ISSUES]bool = [_][MAX_ISSUES]bool{[_]bool{false} ** MAX_ISSUES} ** MAX_ISSUES,
+    deps: [max_issues][max_issues]bool = [_][max_issues]bool{[_]bool{false} ** max_issues} ** max_issues,
 
     pub fn create(self: *LifecycleOracle, idx: usize, priority: u3, parent: ?usize) void {
         self.exists[idx] = true;
@@ -396,7 +396,7 @@ pub const LifecycleOracle = struct {
         self.exists[idx] = false;
         self.archived[idx] = false;
         // Remove all dependencies involving this issue
-        for (0..MAX_ISSUES) |i| {
+        for (0..max_issues) |i| {
             self.deps[idx][i] = false;
             self.deps[i][idx] = false;
         }
@@ -415,7 +415,7 @@ pub const LifecycleOracle = struct {
 
     pub fn canClose(self: *LifecycleOracle, idx: usize) bool {
         // Can't close if has open children
-        for (0..MAX_ISSUES) |i| {
+        for (0..max_issues) |i| {
             if (self.exists[i] and self.parents[i] == idx) {
                 if (self.statuses[i] != .closed) return false;
             }
@@ -432,15 +432,15 @@ pub const LifecycleOracle = struct {
 
     pub fn wouldCreateCycle(self: *LifecycleOracle, from: usize, to: usize) bool {
         // Adding from->to would create cycle if to can reach from
-        var visited = [_]bool{false} ** MAX_ISSUES;
+        var visited = [_]bool{false} ** max_issues;
         return self.canReachDfs(to, from, &visited);
     }
 
-    fn canReachDfs(self: *LifecycleOracle, current: usize, target: usize, visited: *[MAX_ISSUES]bool) bool {
+    fn canReachDfs(self: *LifecycleOracle, current: usize, target: usize, visited: *[max_issues]bool) bool {
         if (current == target) return true;
         if (visited[current]) return false;
         visited[current] = true;
-        for (0..MAX_ISSUES) |j| {
+        for (0..max_issues) |j| {
             if (self.deps[current][j] and self.canReachDfs(j, target, visited)) {
                 return true;
             }
@@ -449,7 +449,7 @@ pub const LifecycleOracle = struct {
     }
 
     pub fn isBlocked(self: *LifecycleOracle, idx: usize) bool {
-        for (0..MAX_ISSUES) |j| {
+        for (0..max_issues) |j| {
             if (self.deps[idx][j] and self.exists[j]) {
                 if (self.statuses[j] == .open or self.statuses[j] == .active) {
                     return true;
@@ -466,7 +466,7 @@ pub const LifecycleOracle = struct {
 
     pub fn countByStatus(self: *LifecycleOracle, status: Status) usize {
         var count: usize = 0;
-        for (0..MAX_ISSUES) |i| {
+        for (0..max_issues) |i| {
             // Archived issues are not in listIssues (only in archive dir)
             if (self.exists[i] and !self.archived[i] and self.statuses[i] == status) count += 1;
         }
@@ -475,7 +475,7 @@ pub const LifecycleOracle = struct {
 
     pub fn readyCount(self: *LifecycleOracle) usize {
         var count: usize = 0;
-        for (0..MAX_ISSUES) |i| {
+        for (0..max_issues) |i| {
             if (self.isReady(i)) count += 1;
         }
         return count;

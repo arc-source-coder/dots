@@ -12,11 +12,11 @@ const Storage = storage_mod.Storage;
 const Issue = storage_mod.Issue;
 const Status = storage_mod.Status;
 
-const DOTS_DIR = storage_mod.DOTS_DIR;
+const dots_dir = storage_mod.dots_dir;
 const max_jsonl_line_bytes = 1024 * 1024;
 const default_priority: i64 = 2;
-const MIN_PRIORITY: i64 = 0;
-const MAX_PRIORITY: i64 = 9;
+const min_priority: i64 = 0;
+const max_priority: i64 = 9;
 
 // Command dispatch table
 const Handler = *const fn (Allocator, []const []const u8) anyerror!void;
@@ -88,7 +88,7 @@ fn cmdInitWrapper(allocator: Allocator, args: []const []const u8) !void {
 }
 
 fn cmdHelp(_: Allocator, _: []const []const u8) !void {
-    return stdout().writeAll(USAGE);
+    return stdout().writeAll(usage);
 }
 
 fn cmdVersion(_: Allocator, _: []const []const u8) !void {
@@ -189,7 +189,7 @@ fn hasFlag(args: []const []const u8, flag: []const u8) bool {
     return false;
 }
 
-const USAGE =
+const usage =
     \\dots - Connect the dots
     \\
     \\Usage: dot [command] [options]
@@ -226,7 +226,7 @@ fn gitAddDots(allocator: Allocator) !void {
     };
 
     // Run git add .dots
-    var child = std.process.Child.init(&.{ "git", "add", DOTS_DIR }, allocator);
+    var child = std.process.Child.init(&.{ "git", "add", dots_dir }, allocator);
     const term = try child.spawnAndWait();
     switch (term) {
         .Exited => |code| {
@@ -276,7 +276,7 @@ fn cmdAdd(allocator: Allocator, args: []const []const u8) !void {
     while (i < args.len) : (i += 1) {
         if (getArg(args, &i, "-p")) |v| {
             const p = std.fmt.parseInt(i64, v, 10) catch fatal("Invalid priority: {s}\n", .{v});
-            priority = std.math.clamp(p, MIN_PRIORITY, MAX_PRIORITY);
+            priority = std.math.clamp(p, min_priority, max_priority);
         } else if (getArg(args, &i, "-d")) |v| {
             description = v;
         } else if (getArg(args, &i, "-P")) |v| {

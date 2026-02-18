@@ -2,15 +2,15 @@ const std = @import("std");
 const fs = std.fs;
 const Allocator = std.mem.Allocator;
 
-pub const DOTS_DIR = ".dots";
-const ARCHIVE_DIR = ".dots/archive";
+pub const dots_dir = ".dots";
+const archive_dir = ".dots/archive";
 
 // Buffer size constants
-const MAX_PATH_LEN = 512; // Maximum path length for file operations
-const MAX_ID_LEN = 128; // Maximum ID length (validated in validateId)
-const MAX_ISSUE_FILE_SIZE = 1024 * 1024; // 1MB max issue file
-const MAX_CONFIG_SIZE = 64 * 1024; // 64KB max config file
-const DEFAULT_PRIORITY: i64 = 2; // Default priority for new issues
+const max_path_len = 512; // Maximum path length for file operations
+const max_id_len = 128; // Maximum ID length (validated in validateId)
+const max_issue_file_size = 1024 * 1024; // 1MB max issue file
+const max_config_size = 64 * 1024; // 64KB max config file
+const default_priority: i64 = 2; // Default priority for new issues
 
 // Errors
 pub const StorageError = error{
@@ -30,7 +30,7 @@ pub const StorageError = error{
 /// Validates that an ID is safe for use in paths and YAML
 pub fn validateId(id: []const u8) StorageError!void {
     if (id.len == 0) return StorageError.InvalidId;
-    if (id.len > MAX_ID_LEN) return StorageError.InvalidId;
+    if (id.len > max_id_len) return StorageError.InvalidId;
     // Reject path traversal attempts
     if (std.mem.indexOf(u8, id, "/") != null) return StorageError.InvalidId;
     if (std.mem.indexOf(u8, id, "\\") != null) return StorageError.InvalidId;
@@ -51,7 +51,7 @@ fn writeFileAtomic(dir: fs.Dir, path: []const u8, content: []const u8) !void {
     std.crypto.random.bytes(&rand_buf);
     const hex = std.fmt.bytesToHex(rand_buf, .lower);
 
-    var tmp_path_buf: [MAX_PATH_LEN + 16]u8 = undefined; // +16 for ".XXXXXXXX.tmp"
+    var tmp_path_buf: [max_path_len + 16]u8 = undefined; // +16 for ".XXXXXXXX.tmp"
     const tmp_path = std.fmt.bufPrint(&tmp_path_buf, "{s}.{s}.tmp", .{ path, hex }) catch return StorageError.IoError;
 
     const tmp_file = try dir.createFile(tmp_path, .{});
@@ -326,7 +326,7 @@ pub fn freeOrphanParents(allocator: Allocator, orphans: []const []const u8) void
 const Frontmatter = struct {
     title: []const u8 = "",
     status: Status = .open,
-    priority: i64 = DEFAULT_PRIORITY,
+    priority: i64 = default_priority,
     issue_type: []const u8 = "task",
     assignee: ?[]const u8 = null,
     created_at: []const u8 = "",
@@ -737,8 +737,8 @@ const abbrev_map = std.StaticStringMap([]const u8).initComptime(.{
     .{ "components", "comps" },
 });
 
-const MAX_SLUG_LEN: usize = 30;
-const MAX_SLUG_WORDS: usize = 3;
+const max_slug_len: usize = 30;
+const max_slug_words: usize = 3;
 
 /// Convert title to URL-safe slug (max 3 words, 30 chars)
 /// Example: "Fix User Authentication Bug" -> "fix-user-auth"
@@ -765,18 +765,18 @@ pub fn slugify(allocator: Allocator, title: []const u8) ![]u8 {
             try appendWord(allocator, &result, title[word_start..i]);
             word_count += 1;
             in_word = false;
-            if (result.items.len >= MAX_SLUG_LEN or word_count >= MAX_SLUG_WORDS) break;
+            if (result.items.len >= max_slug_len or word_count >= max_slug_words) break;
         }
     }
 
     // Handle last word
-    if (in_word and result.items.len < MAX_SLUG_LEN and word_count < MAX_SLUG_WORDS) {
+    if (in_word and result.items.len < max_slug_len and word_count < max_slug_words) {
         try appendWord(allocator, &result, title[word_start..]);
     }
 
     // Truncate at word boundary if over limit
-    if (result.items.len > MAX_SLUG_LEN) {
-        var truncate_at = MAX_SLUG_LEN;
+    if (result.items.len > max_slug_len) {
+        var truncate_at = max_slug_len;
         while (truncate_at > 0 and result.items[truncate_at - 1] != '-') : (truncate_at -= 1) {}
         if (truncate_at > 0) truncate_at -= 1; // Remove trailing hyphen
         result.shrinkRetainingCapacity(truncate_at);
@@ -873,22 +873,22 @@ pub const Storage = struct {
 
     pub fn open(allocator: Allocator) !Self {
         // Create .dots directory if needed
-        fs.cwd().makeDir(DOTS_DIR) catch |err| switch (err) {
+        fs.cwd().makeDir(dots_dir) catch |err| switch (err) {
             error.PathAlreadyExists => {},
             else => return err,
         };
 
         // Create archive directory if needed
-        fs.cwd().makeDir(ARCHIVE_DIR) catch |err| switch (err) {
+        fs.cwd().makeDir(archive_dir) catch |err| switch (err) {
             error.PathAlreadyExists => {},
             else => return err,
         };
 
-        const dots_dir = try fs.cwd().openDir(DOTS_DIR, .{ .iterate = true });
+        const dots_dir_handle = try fs.cwd().openDir(dots_dir, .{ .iterate = true });
 
         return .{
             .allocator = allocator,
-            .dots_dir = dots_dir,
+            .dots_dir = dots_dir_handle,
         };
     }
 
@@ -903,11 +903,11 @@ pub const Storage = struct {
 
         try self.scanResolve(self.dots_dir, states[0..]);
 
-        const archive_dir = self.dots_dir.openDir("archive", .{ .iterate = true }) catch |err| switch (err) {
+        const archive_dir_opt = self.dots_dir.openDir("archive", .{ .iterate = true }) catch |err| switch (err) {
             error.FileNotFound => null,
             else => return err,
         };
-        if (archive_dir) |*dir| {
+        if (archive_dir_opt) |*dir| {
             var d = dir.*;
             defer d.close();
             try self.scanResolve(d, states[0..]);
@@ -943,11 +943,11 @@ pub const Storage = struct {
 
         try self.scanResolve(self.dots_dir, states);
 
-        const archive_dir = self.dots_dir.openDir("archive", .{ .iterate = true }) catch |err| switch (err) {
+        const archive_dir_opt = self.dots_dir.openDir("archive", .{ .iterate = true }) catch |err| switch (err) {
             error.FileNotFound => null,
             else => return err,
         };
-        if (archive_dir) |*dir| {
+        if (archive_dir_opt) |*dir| {
             var d = dir.*;
             defer d.close();
             try self.scanResolve(d, states);
@@ -1008,7 +1008,7 @@ pub const Storage = struct {
 
     fn findIssuePath(self: *Self, id: []const u8) ![]const u8 {
         // Try direct file: .dots/{id}.md
-        var path_buf: [MAX_PATH_LEN]u8 = undefined;
+        var path_buf: [max_path_len]u8 = undefined;
         const direct_path = std.fmt.bufPrint(&path_buf, "{s}.md", .{id}) catch return StorageError.IoError;
 
         if (self.dots_dir.statFile(direct_path)) |_| {
@@ -1038,14 +1038,14 @@ pub const Storage = struct {
         return try self.searchForIssue(self.dots_dir, id) orelse StorageError.IssueNotFound;
     }
 
-    const MAX_SEARCH_DEPTH = 10;
+    const max_search_depth = 10;
 
     fn searchForIssue(self: *Self, dir: fs.Dir, id: []const u8) !?[]const u8 {
         return self.searchForIssueWithDepth(dir, id, 0);
     }
 
     fn searchForIssueWithDepth(self: *Self, dir: fs.Dir, id: []const u8, depth: usize) !?[]const u8 {
-        if (depth >= MAX_SEARCH_DEPTH) return null; // Prevent infinite recursion
+        if (depth >= max_search_depth) return null; // Prevent infinite recursion
 
         var iter = dir.iterate();
         while (try iter.next()) |entry| {
@@ -1059,7 +1059,7 @@ pub const Storage = struct {
                 defer subdir.close();
 
                 // Check for {id}.md in this directory
-                var path_buf: [MAX_PATH_LEN]u8 = undefined;
+                var path_buf: [max_path_len]u8 = undefined;
                 const filename = std.fmt.bufPrint(&path_buf, "{s}.md", .{id}) catch return StorageError.IoError;
                 if (subdir.statFile(filename)) |_| {
                     const full_path = try std.fmt.allocPrint(self.allocator, "{s}/{s}", .{ entry.name, filename });
@@ -1098,7 +1098,7 @@ pub const Storage = struct {
         const file = try self.dots_dir.openFile(path, .{});
         defer file.close();
 
-        const content = try file.readToEndAlloc(self.allocator, MAX_ISSUE_FILE_SIZE);
+        const content = try file.readToEndAlloc(self.allocator, max_issue_file_size);
         defer self.allocator.free(content);
 
         const parsed = try parseFrontmatter(self.allocator, content);
@@ -1199,7 +1199,7 @@ pub const Storage = struct {
         const content = try serializeFrontmatter(self.allocator, issue);
         defer self.allocator.free(content);
 
-        var path_buf: [MAX_PATH_LEN]u8 = undefined;
+        var path_buf: [max_path_len]u8 = undefined;
         const path = if (parent_id) |pid| blk: {
             try self.ensureParentFolder(pid);
             break :blk std.fmt.bufPrint(&path_buf, "{s}/{s}.md", .{ pid, issue.id }) catch return StorageError.IoError;
@@ -1224,12 +1224,12 @@ pub const Storage = struct {
     }
 
     fn ensureParentFolder(self: *Self, parent_id: []const u8) !void {
-        var path_buf: [MAX_PATH_LEN]u8 = undefined;
+        var path_buf: [max_path_len]u8 = undefined;
 
         const old_fmt_result = std.fmt.bufPrint(&path_buf, "{s}.md", .{parent_id});
         const old_path = old_fmt_result catch return StorageError.IoError;
 
-        var new_path_buf: [MAX_PATH_LEN]u8 = undefined;
+        var new_path_buf: [max_path_len]u8 = undefined;
         const new_fmt_result = std.fmt.bufPrint(&new_path_buf, "{s}/{s}.md", .{ parent_id, parent_id });
         const new_path = new_fmt_result catch return StorageError.IoError;
 
@@ -1346,13 +1346,13 @@ pub const Storage = struct {
             }
 
             // All children closed, move entire folder
-            var archive_path_buf: [MAX_PATH_LEN]u8 = undefined;
+            var archive_path_buf: [max_path_len]u8 = undefined;
             const archive_fmt_result = std.fmt.bufPrint(&archive_path_buf, "archive/{s}", .{folder_name});
             const archive_path = archive_fmt_result catch return StorageError.IoError;
             try self.dots_dir.rename(folder_name, archive_path);
         } else {
             // Simple file, move to archive
-            var archive_path_buf: [MAX_PATH_LEN]u8 = undefined;
+            var archive_path_buf: [max_path_len]u8 = undefined;
             const archive_fmt_result = std.fmt.bufPrint(&archive_path_buf, "archive/{s}", .{path});
             const archive_path = archive_fmt_result catch return StorageError.IoError;
             try self.dots_dir.rename(path, archive_path);
@@ -1462,7 +1462,7 @@ pub const Storage = struct {
 
         if (is_parent) {
             // Parent issue: rename folder and file inside
-            var new_path_buf: [MAX_PATH_LEN]u8 = undefined;
+            var new_path_buf: [max_path_len]u8 = undefined;
             const new_fmt_result = std.fmt.bufPrint(&new_path_buf, "{s}/{s}.md", .{ new_id, new_id });
             const new_path = new_fmt_result catch return StorageError.IoError;
 
@@ -1470,7 +1470,7 @@ pub const Storage = struct {
             try self.dots_dir.rename(old_id, new_id);
 
             // Write new content to new path (old file was renamed with folder)
-            var old_file_new_folder_buf: [MAX_PATH_LEN]u8 = undefined;
+            var old_file_new_folder_buf: [max_path_len]u8 = undefined;
             const old_file_fmt_result = std.fmt.bufPrint(&old_file_new_folder_buf, "{s}/{s}.md", .{ new_id, old_id });
             const old_file_in_new_folder = old_file_fmt_result catch return StorageError.IoError;
 
@@ -1482,7 +1482,7 @@ pub const Storage = struct {
             };
         } else {
             // Simple file or child: just rename
-            var new_path_buf: [MAX_PATH_LEN]u8 = undefined;
+            var new_path_buf: [max_path_len]u8 = undefined;
             const new_path = if (issue.parent) |parent| blk: {
                 const child_fmt_result = std.fmt.bufPrint(&new_path_buf, "{s}/{s}.md", .{ parent, new_id });
                 break :blk child_fmt_result catch return StorageError.IoError;
@@ -1610,8 +1610,8 @@ pub const Storage = struct {
         try self.collectIssuesFromDir(self.dots_dir, "", null, &issues);
 
         // Also collect from archive
-        if (self.dots_dir.openDir("archive", .{ .iterate = true })) |archive_dir| {
-            var ad = archive_dir;
+        if (self.dots_dir.openDir("archive", .{ .iterate = true })) |archive_dir_handle| {
+            var ad = archive_dir_handle;
             defer ad.close();
             try self.collectIssuesFromDir(ad, "archive", null, &issues);
         } else |err| switch (err) {
@@ -1648,7 +1648,7 @@ pub const Storage = struct {
         while (try iter.next()) |entry| {
             if (entry.kind == .file and std.mem.endsWith(u8, entry.name, ".md")) {
                 const id = entry.name[0 .. entry.name.len - 3];
-                var path_buf: [MAX_PATH_LEN]u8 = undefined;
+                var path_buf: [max_path_len]u8 = undefined;
                 const path = if (prefix.len > 0) blk: {
                     const path_fmt_result = std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ prefix, entry.name });
                     break :blk path_fmt_result catch return StorageError.IoError;
@@ -1675,7 +1675,7 @@ pub const Storage = struct {
                 var subdir = try dir.openDir(entry.name, .{ .iterate = true });
                 defer subdir.close();
 
-                var sub_prefix_buf: [MAX_PATH_LEN]u8 = undefined;
+                var sub_prefix_buf: [max_path_len]u8 = undefined;
                 const sub_prefix = if (prefix.len > 0) blk: {
                     const prefix_fmt_result = std.fmt.bufPrint(&sub_prefix_buf, "{s}/{s}", .{ prefix, entry.name });
                     break :blk prefix_fmt_result catch return StorageError.IoError;
@@ -1763,7 +1763,7 @@ pub const Storage = struct {
             const id = entry.name[0 .. entry.name.len - 3];
             if (std.mem.eql(u8, id, folder_name)) continue;
 
-            var path_buf: [MAX_PATH_LEN]u8 = undefined;
+            var path_buf: [max_path_len]u8 = undefined;
             const child_fmt_result = std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ folder_name, entry.name });
             const path = child_fmt_result catch return StorageError.IoError;
             var issue = self.readIssueFromPath(path, id) catch |err| switch (err) {
@@ -1806,7 +1806,7 @@ pub const Storage = struct {
                 }
             } else if (entry.kind == .directory and !std.mem.eql(u8, entry.name, "archive")) {
                 // Folder = parent issue
-                var path_buf: [MAX_PATH_LEN]u8 = undefined;
+                var path_buf: [max_path_len]u8 = undefined;
                 const parent_fmt_result = std.fmt.bufPrint(&path_buf, "{s}/{s}.md", .{ entry.name, entry.name });
                 const path = parent_fmt_result catch return StorageError.IoError;
                 var issue = self.readIssueFromPath(path, entry.name) catch |err| switch (err) {
@@ -1909,7 +1909,7 @@ pub const Storage = struct {
         }
 
         for (names.items) |name| {
-            var src_buf: [MAX_PATH_LEN]u8 = undefined;
+            var src_buf: [max_path_len]u8 = undefined;
             const src_fmt_result = std.fmt.bufPrint(&src_buf, "{s}/{s}", .{ folder_name, name });
             const src = src_fmt_result catch return StorageError.IoError;
             self.dots_dir.rename(src, name) catch |err| switch (err) {
@@ -1951,7 +1951,7 @@ pub const Storage = struct {
                 const id = entry.name[0 .. entry.name.len - 3];
                 if (std.mem.eql(u8, id, parent_id)) continue; // Skip parent itself
 
-                var path_buf: [MAX_PATH_LEN]u8 = undefined;
+                var path_buf: [max_path_len]u8 = undefined;
                 const entry_fmt_result = std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ parent_id, entry.name });
                 const path = entry_fmt_result catch return StorageError.IoError;
 
@@ -2188,7 +2188,7 @@ pub const Storage = struct {
         };
         defer file.close();
 
-        const content = try file.readToEndAlloc(self.allocator, MAX_CONFIG_SIZE);
+        const content = try file.readToEndAlloc(self.allocator, max_config_size);
         defer self.allocator.free(content);
 
         var lines = std.mem.splitScalar(u8, content, '\n');
@@ -2221,7 +2221,7 @@ pub const Storage = struct {
 
         if (file) |f| {
             defer f.close();
-            const content = try f.readToEndAlloc(self.allocator, MAX_CONFIG_SIZE);
+            const content = try f.readToEndAlloc(self.allocator, max_config_size);
             defer self.allocator.free(content);
 
             var lines = std.mem.splitScalar(u8, content, '\n');
