@@ -241,7 +241,7 @@ pub const Issue = struct {
     }
 };
 
-const StatusMap = std.StringHashMap(Status);
+pub const StatusMap = std.StringHashMap(Status);
 
 pub const ResolveResult = union(enum) {
     ok: []const u8,
