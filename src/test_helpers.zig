@@ -291,7 +291,7 @@ pub const TestStorage = struct {
         // Open storage (creates .dots in test dir)
         const storage = Storage.open(allocator) catch |err| {
             // Restore original directory on error
-            original_dir.setAsCwd() catch {};
+            original_dir.setAsCwd() catch {}; // ziglint-ignore: Z026 - best effort cleanup
             return err;
         };
 
@@ -305,7 +305,7 @@ pub const TestStorage = struct {
 
     pub fn deinit(self: *TestStorage) void {
         self.storage.close();
-        self.original_dir.setAsCwd() catch {};
+        self.original_dir.setAsCwd() catch {}; // ziglint-ignore: Z026 - cleanup failure is non-fatal
         self.* = undefined;
     }
 };

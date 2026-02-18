@@ -121,8 +121,8 @@ fn stderr() *std.Io.Writer {
 
 fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     const w = stderr();
-    w.print(fmt, args) catch {};
-    w.flush() catch {};
+    w.print(fmt, args) catch unreachable;
+    w.flush() catch unreachable;
     std.process.exit(1);
 }
 
