@@ -869,9 +869,7 @@ pub const Storage = struct {
     allocator: Allocator,
     dots_dir: fs.Dir,
 
-    const Self = @This();
-
-    pub fn open(allocator: Allocator) !Self {
+    pub fn open(allocator: Allocator) !Storage {
         // Create .dots directory if needed
         fs.cwd().makeDir(dots_dir) catch |err| switch (err) {
             error.PathAlreadyExists => {},
@@ -892,12 +890,12 @@ pub const Storage = struct {
         };
     }
 
-    pub fn close(self: *Self) void {
+    pub fn close(self: *Storage) void {
         self.dots_dir.close();
     }
 
     // Resolve a short ID prefix to full ID
-    pub fn resolveId(self: *Self, prefix: []const u8) ![]const u8 {
+    pub fn resolveId(self: *Storage, prefix: []const u8) ![]const u8 {
         var states = [_]ResolveState{.{ .prefix = prefix }};
         errdefer states[0].deinit(self.allocator);
 
@@ -919,7 +917,7 @@ pub const Storage = struct {
         return states[0].match.?;
     }
 
-    pub fn resolveIdActive(self: *Self, prefix: []const u8) ![]const u8 {
+    pub fn resolveIdActive(self: *Storage, prefix: []const u8) ![]const u8 {
         var states = [_]ResolveState{.{ .prefix = prefix }};
         errdefer states[0].deinit(self.allocator);
 
@@ -931,7 +929,7 @@ pub const Storage = struct {
         return states[0].match.?;
     }
 
-    pub fn resolveIds(self: *Self, prefixes: []const []const u8) ![]ResolveResult {
+    pub fn resolveIds(self: *Storage, prefixes: []const []const u8) ![]ResolveResult {
         var states = try self.allocator.alloc(ResolveState, prefixes.len);
         errdefer {
             for (states) |*state| state.deinit(self.allocator);
@@ -973,7 +971,7 @@ pub const Storage = struct {
         return results;
     }
 
-    fn addResolve(self: *Self, states: []ResolveState, id: []const u8) !void {
+    fn addResolve(self: *Storage, states: []ResolveState, id: []const u8) !void {
         for (states) |*state| {
             if (state.ambig) continue;
             if (std.mem.startsWith(u8, id, state.prefix)) {
@@ -982,7 +980,7 @@ pub const Storage = struct {
         }
     }
 
-    fn scanResolve(self: *Self, dir: fs.Dir, states: []ResolveState) !void {
+    fn scanResolve(self: *Storage, dir: fs.Dir, states: []ResolveState) !void {
         var iter = dir.iterate();
         while (try iter.next()) |entry| {
             if (entry.kind == .file and std.mem.endsWith(u8, entry.name, ".md")) {
@@ -997,7 +995,7 @@ pub const Storage = struct {
         }
     }
 
-    pub fn issueExists(self: *Self, id: []const u8) !bool {
+    pub fn issueExists(self: *Storage, id: []const u8) !bool {
         const path = self.findIssuePath(id) catch |err| switch (err) {
             StorageError.IssueNotFound => return false,
             else => return err,
@@ -1006,7 +1004,7 @@ pub const Storage = struct {
         return true;
     }
 
-    fn findIssuePath(self: *Self, id: []const u8) ![]const u8 {
+    fn findIssuePath(self: *Storage, id: []const u8) ![]const u8 {
         // Try direct file: .dots/{id}.md
         var path_buf: [max_path_len]u8 = undefined;
         const direct_path = std.fmt.bufPrint(&path_buf, "{s}.md", .{id}) catch return StorageError.IoError;
@@ -1040,11 +1038,11 @@ pub const Storage = struct {
 
     const max_search_depth = 10;
 
-    fn searchForIssue(self: *Self, dir: fs.Dir, id: []const u8) !?[]const u8 {
+    fn searchForIssue(self: *Storage, dir: fs.Dir, id: []const u8) !?[]const u8 {
         return self.searchForIssueWithDepth(dir, id, 0);
     }
 
-    fn searchForIssueWithDepth(self: *Self, dir: fs.Dir, id: []const u8, depth: usize) !?[]const u8 {
+    fn searchForIssueWithDepth(self: *Storage, dir: fs.Dir, id: []const u8, depth: usize) !?[]const u8 {
         if (depth >= max_search_depth) return null; // Prevent infinite recursion
 
         var iter = dir.iterate();
@@ -1081,7 +1079,7 @@ pub const Storage = struct {
         return null;
     }
 
-    pub fn getIssue(self: *Self, id: []const u8) !?Issue {
+    pub fn getIssue(self: *Storage, id: []const u8) !?Issue {
         // Validate ID to prevent path traversal attacks
         try validateId(id);
 
@@ -1094,7 +1092,7 @@ pub const Storage = struct {
         return try self.readIssueFromPath(path, id);
     }
 
-    fn readIssueFromPath(self: *Self, path: []const u8, id: []const u8) !Issue {
+    fn readIssueFromPath(self: *Storage, path: []const u8, id: []const u8) !Issue {
         const file = try self.dots_dir.openFile(path, .{});
         defer file.close();
 
@@ -1157,7 +1155,7 @@ pub const Storage = struct {
         };
     }
 
-    fn extractParentFromPath(self: *Self, path: []const u8) !?[]const u8 {
+    fn extractParentFromPath(self: *Storage, path: []const u8) !?[]const u8 {
         // Path like "parent_id/child_id.md" means parent_id is the parent
         // Path like "child_id.md" means no parent
         const slash_idx = std.mem.indexOf(u8, path, "/");
@@ -1183,7 +1181,7 @@ pub const Storage = struct {
         return null;
     }
 
-    pub fn createIssue(self: *Self, issue: Issue, parent_id: ?[]const u8) !void {
+    pub fn createIssue(self: *Storage, issue: Issue, parent_id: ?[]const u8) !void {
         // Validate IDs to prevent path traversal
         try validateId(issue.id);
         if (parent_id) |pid| try validateId(pid);
@@ -1223,7 +1221,7 @@ pub const Storage = struct {
         try writeFileAtomic(self.dots_dir, path, content);
     }
 
-    fn ensureParentFolder(self: *Self, parent_id: []const u8) !void {
+    fn ensureParentFolder(self: *Storage, parent_id: []const u8) !void {
         var path_buf: [max_path_len]u8 = undefined;
 
         const old_fmt_result = std.fmt.bufPrint(&path_buf, "{s}.md", .{parent_id});
@@ -1254,7 +1252,7 @@ pub const Storage = struct {
     }
 
     pub fn updateStatus(
-        self: *Self,
+        self: *Storage,
         id: []const u8,
         status: Status,
         closed_at: ?[]const u8,
@@ -1301,7 +1299,7 @@ pub const Storage = struct {
     }
 
     /// Archive an issue by ID (for migration of already-closed issues)
-    pub fn archiveIssue(self: *Self, id: []const u8) !void {
+    pub fn archiveIssue(self: *Storage, id: []const u8) !void {
         const path = self.findIssuePath(id) catch |err| switch (err) {
             StorageError.IssueNotFound => return StorageError.IssueNotFound,
             else => return err,
@@ -1310,7 +1308,7 @@ pub const Storage = struct {
         try self.maybeArchive(id, path);
     }
 
-    fn maybeArchive(self: *Self, id: []const u8, path: []const u8) !void {
+    fn maybeArchive(self: *Storage, id: []const u8, path: []const u8) !void {
         // Don't archive if already in archive
         if (std.mem.startsWith(u8, path, "archive/")) return;
 
@@ -1359,7 +1357,7 @@ pub const Storage = struct {
         }
     }
 
-    pub fn deleteIssue(self: *Self, id: []const u8) !void {
+    pub fn deleteIssue(self: *Storage, id: []const u8) !void {
         const path = try self.findIssuePath(id);
         defer self.allocator.free(path);
 
@@ -1397,7 +1395,7 @@ pub const Storage = struct {
     }
 
     /// Remove dependency references for all children in a folder
-    fn removeChildDependencyReferences(self: *Self, folder_name: []const u8) !void {
+    fn removeChildDependencyReferences(self: *Storage, folder_name: []const u8) !void {
         var folder = self.dots_dir.openDir(folder_name, .{ .iterate = true }) catch |err| switch (err) {
             error.FileNotFound => return,
             else => return err,
@@ -1416,7 +1414,7 @@ pub const Storage = struct {
     }
 
     /// Rename an issue to a new ID, updating all dependency references
-    pub fn renameIssue(self: *Self, old_id: []const u8, new_id: []const u8) !void {
+    pub fn renameIssue(self: *Storage, old_id: []const u8, new_id: []const u8) !void {
         try validateId(old_id);
         try validateId(new_id);
 
@@ -1504,7 +1502,7 @@ pub const Storage = struct {
     }
 
     /// Update all references from old_id to new_id in other issues' blocks arrays
-    fn updateDependencyReferences(self: *Self, old_id: []const u8, new_id: []const u8) !void {
+    fn updateDependencyReferences(self: *Storage, old_id: []const u8, new_id: []const u8) !void {
         const issues = try self.listAllIssuesIncludingArchived();
         defer freeIssues(self.allocator, issues);
 
@@ -1551,7 +1549,7 @@ pub const Storage = struct {
 
     /// Remove all references to the given ID from other issues' blocks arrays
     /// Optimized: uses already-loaded issues instead of re-reading from disk
-    fn removeDependencyReferences(self: *Self, deleted_id: []const u8) !void {
+    fn removeDependencyReferences(self: *Storage, deleted_id: []const u8) !void {
         // Get all issues (including archived)
         const issues = try self.listAllIssuesIncludingArchived();
         defer freeIssues(self.allocator, issues);
@@ -1599,7 +1597,7 @@ pub const Storage = struct {
         }
     }
 
-    pub fn listAllIssuesIncludingArchived(self: *Self) ![]Issue {
+    pub fn listAllIssuesIncludingArchived(self: *Storage) ![]Issue {
         var issues: std.ArrayList(Issue) = .{};
         errdefer {
             for (issues.items) |*iss| iss.deinit(self.allocator);
@@ -1622,7 +1620,7 @@ pub const Storage = struct {
         return issues.toOwnedSlice(self.allocator);
     }
 
-    pub fn listIssues(self: *Self, status_filter: ?Status) ![]Issue {
+    pub fn listIssues(self: *Storage, status_filter: ?Status) ![]Issue {
         var issues: std.ArrayList(Issue) = .{};
         errdefer {
             for (issues.items) |*iss| iss.deinit(self.allocator);
@@ -1638,7 +1636,7 @@ pub const Storage = struct {
     }
 
     fn collectIssuesFromDir(
-        self: *Self,
+        self: *Storage,
         dir: fs.Dir,
         prefix: []const u8,
         status_filter: ?Status,
@@ -1686,7 +1684,7 @@ pub const Storage = struct {
         }
     }
 
-    pub fn buildStatusMap(self: *Self, issues: []const Issue) !StatusMap {
+    pub fn buildStatusMap(self: *Storage, issues: []const Issue) !StatusMap {
         // Caller must keep issue IDs alive while the map is used.
         var status_by_id = StatusMap.init(self.allocator);
         if (issues.len <= std.math.maxInt(u32)) {
@@ -1698,7 +1696,7 @@ pub const Storage = struct {
         return status_by_id;
     }
 
-    pub fn getReadyIssues(self: *Self) ![]Issue {
+    pub fn getReadyIssues(self: *Storage) ![]Issue {
         const all_issues = try self.listIssues(null);
         defer self.allocator.free(all_issues);
 
@@ -1750,7 +1748,7 @@ pub const Storage = struct {
         return false;
     }
 
-    fn appendOrphanChildren(self: *Self, folder_name: []const u8, issues: *std.ArrayList(Issue)) !void {
+    fn appendOrphanChildren(self: *Storage, folder_name: []const u8, issues: *std.ArrayList(Issue)) !void {
         var folder = self.dots_dir.openDir(folder_name, .{ .iterate = true }) catch |err| switch (err) {
             error.FileNotFound, error.NotDir => return,
             else => return err,
@@ -1781,7 +1779,7 @@ pub const Storage = struct {
     }
 
     fn scanRoots(
-        self: *Self,
+        self: *Storage,
         issues: ?*std.ArrayList(Issue),
         orphans: ?*std.ArrayList([]const u8),
     ) !void {
@@ -1836,7 +1834,7 @@ pub const Storage = struct {
         }
     }
 
-    pub fn getRootIssues(self: *Self) ![]Issue {
+    pub fn getRootIssues(self: *Storage) ![]Issue {
         var issues: std.ArrayList(Issue) = .{};
         errdefer {
             for (issues.items) |*iss| iss.deinit(self.allocator);
@@ -1851,7 +1849,7 @@ pub const Storage = struct {
         return issues.toOwnedSlice(self.allocator);
     }
 
-    pub fn listOrphanParents(self: *Self) ![]const []const u8 {
+    pub fn listOrphanParents(self: *Storage) ![]const []const u8 {
         var orphans: std.ArrayList([]const u8) = .{};
         errdefer {
             for (orphans.items) |name| self.allocator.free(name);
@@ -1863,7 +1861,7 @@ pub const Storage = struct {
         return orphans.toOwnedSlice(self.allocator);
     }
 
-    pub fn fixOrphans(self: *Self) !FixResult {
+    pub fn fixOrphans(self: *Storage) !FixResult {
         const orphans = try self.listOrphanParents();
         defer freeOrphanParents(self.allocator, orphans);
 
@@ -1881,7 +1879,7 @@ pub const Storage = struct {
         };
     }
 
-    fn promoteOrphanFolder(self: *Self, folder_name: []const u8) !usize {
+    fn promoteOrphanFolder(self: *Storage, folder_name: []const u8) !usize {
         var folder = self.dots_dir.openDir(folder_name, .{ .iterate = true }) catch |err| switch (err) {
             error.FileNotFound, error.NotDir => return 0,
             else => return err,
@@ -1931,7 +1929,7 @@ pub const Storage = struct {
         return moved;
     }
 
-    fn getChildIssues(self: *Self, parent_id: []const u8) ![]Issue {
+    fn getChildIssues(self: *Storage, parent_id: []const u8) ![]Issue {
         var children: std.ArrayList(Issue) = .{};
         errdefer {
             for (children.items) |*c| c.deinit(self.allocator);
@@ -1972,7 +1970,7 @@ pub const Storage = struct {
         return children.toOwnedSlice(self.allocator);
     }
 
-    pub fn getChildren(self: *Self, parent_id: []const u8) ![]ChildIssue {
+    pub fn getChildren(self: *Storage, parent_id: []const u8) ![]ChildIssue {
         const all_issues = try self.listAllIssuesIncludingArchived();
         defer freeIssues(self.allocator, all_issues);
 
@@ -1982,7 +1980,8 @@ pub const Storage = struct {
         return try self.getChildrenWithStatusMap(parent_id, &status_by_id);
     }
 
-    pub fn getChildrenWithStatusMap(self: *Self, parent_id: []const u8, status_by_id: *const StatusMap) ![]ChildIssue {
+    // ziglint-ignore: Z024
+    pub fn getChildrenWithStatusMap(self: *Storage, parent_id: []const u8, status_by_id: *const StatusMap) ![]ChildIssue {
         const child_issues = try self.getChildIssues(parent_id);
         var transfer_done = false;
         errdefer if (!transfer_done) {
@@ -2011,7 +2010,7 @@ pub const Storage = struct {
         return children.toOwnedSlice(self.allocator);
     }
 
-    pub fn searchIssues(self: *Self, query: []const u8) ![]Issue {
+    pub fn searchIssues(self: *Storage, query: []const u8) ![]Issue {
         const all_issues = try self.listAllIssuesIncludingArchived();
         defer self.allocator.free(all_issues);
 
@@ -2062,7 +2061,7 @@ pub const Storage = struct {
         return true;
     }
 
-    pub fn addDependency(self: *Self, issue_id: []const u8, depends_on_id: []const u8, dep_type: []const u8) !void {
+    pub fn addDependency(self: *Storage, issue_id: []const u8, depends_on_id: []const u8, dep_type: []const u8) !void {
         // Validate IDs to prevent path traversal
         try validateId(issue_id);
         try validateId(depends_on_id);
@@ -2127,7 +2126,7 @@ pub const Storage = struct {
         // "parent-child" type is handled by file location, not frontmatter
     }
 
-    fn wouldCreateCycle(self: *Self, from_id: []const u8, to_id: []const u8) !bool {
+    fn wouldCreateCycle(self: *Storage, from_id: []const u8, to_id: []const u8) !bool {
         // BFS from to_id following blocks dependencies
         // If we reach from_id, cycle would be created
 
@@ -2169,7 +2168,7 @@ pub const Storage = struct {
         return false;
     }
 
-    pub fn purgeArchive(self: *Self) !void {
+    pub fn purgeArchive(self: *Storage) !void {
         // deleteTree succeeds silently if the directory doesn't exist
         try self.dots_dir.deleteTree("archive");
 
@@ -2181,7 +2180,7 @@ pub const Storage = struct {
     }
 
     // Config stored in .dots/config as simple key=value lines
-    pub fn getConfig(self: *Self, key: []const u8) !?[]const u8 {
+    pub fn getConfig(self: *Storage, key: []const u8) !?[]const u8 {
         const file = self.dots_dir.openFile("config", .{}) catch |err| switch (err) {
             error.FileNotFound => return null,
             else => return err,
@@ -2202,7 +2201,7 @@ pub const Storage = struct {
         return null;
     }
 
-    pub fn setConfig(self: *Self, key: []const u8, value: []const u8) !void {
+    pub fn setConfig(self: *Storage, key: []const u8, value: []const u8) !void {
         // Read existing config
         var config = std.StringHashMap([]const u8).init(self.allocator);
         defer {
