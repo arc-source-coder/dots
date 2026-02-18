@@ -16,7 +16,7 @@ const openTestStorage = h.openTestStorage;
 
 test "slugify: basic conversion" {
     const allocator = std.testing.allocator;
-    const oh = OhSnap{};
+    const oh: OhSnap = .{};
 
     const slug = try storage_mod.slugify(allocator, "Fix User Authentication Bug");
     defer allocator.free(slug);
@@ -29,7 +29,7 @@ test "slugify: basic conversion" {
 
 test "slugify: multiple abbreviations" {
     const allocator = std.testing.allocator;
-    const oh = OhSnap{};
+    const oh: OhSnap = .{};
 
     const slug = try storage_mod.slugify(allocator, "Database Configuration Implementation");
     defer allocator.free(slug);
@@ -42,7 +42,7 @@ test "slugify: multiple abbreviations" {
 
 test "slugify: empty title" {
     const allocator = std.testing.allocator;
-    const oh = OhSnap{};
+    const oh: OhSnap = .{};
 
     const slug = try storage_mod.slugify(allocator, "");
     defer allocator.free(slug);
@@ -55,7 +55,7 @@ test "slugify: empty title" {
 
 test "slugify: special characters stripped" {
     const allocator = std.testing.allocator;
-    const oh = OhSnap{};
+    const oh: OhSnap = .{};
 
     const slug = try storage_mod.slugify(allocator, "Fix: API (v2) -- update!");
     defer allocator.free(slug);
@@ -125,7 +125,7 @@ test "slugify: prop: idempotent on valid slugs" {
 
 test "cli: slugify skips already-slugged issues from dot add" {
     const allocator = std.testing.allocator;
-    const oh = OhSnap{};
+    const oh: OhSnap = .{};
 
     const test_dir = setupTestDirOrPanic(allocator);
     defer cleanupTestDirAndFree(allocator, test_dir);
@@ -189,7 +189,7 @@ test "cli: slugify preserves hex suffix from original ID" {
     var ts = openTestStorage(allocator, test_dir);
     try ts.storage.setConfig("prefix", "dots");
 
-    const issue = Issue{
+    const issue: Issue = .{
         .id = "dots-abcd1234",
         .title = "Database migration",
         .description = "",
@@ -236,7 +236,7 @@ test "cli: slugify updates dependency references" {
     try ts.storage.setConfig("prefix", "dots");
 
     // Create blocker issue
-    const blocker = Issue{
+    const blocker: Issue = .{
         .id = "dots-11111111",
         .title = "API endpoint",
         .description = "",
@@ -252,7 +252,7 @@ test "cli: slugify updates dependency references" {
     try ts.storage.createIssue(blocker, null);
 
     // Create dependent issue
-    const dependent = Issue{
+    const dependent: Issue = .{
         .id = "dots-22222222",
         .title = "Frontend integration",
         .description = "",
@@ -304,7 +304,7 @@ test "cli: slugify updates dependency references" {
 
 test "cli: slugify skips already-slugified IDs" {
     const allocator = std.testing.allocator;
-    const oh = OhSnap{};
+    const oh: OhSnap = .{};
 
     const test_dir = setupTestDirOrPanic(allocator);
     defer cleanupTestDirAndFree(allocator, test_dir);
@@ -313,7 +313,7 @@ test "cli: slugify skips already-slugified IDs" {
     try ts.storage.setConfig("prefix", "dots");
 
     // Create issue with already-slugified ID
-    const issue = Issue{
+    const issue: Issue = .{
         .id = "dots-fix-auth-bug-abcd1234",
         .title = "Fix authentication bug",
         .description = "",
@@ -400,7 +400,7 @@ test "cli: slugify includes closed/archived issues" {
     try ts.storage.setConfig("prefix", "dots");
 
     // Create open issue
-    const open_issue = Issue{
+    const open_issue: Issue = .{
         .id = "dots-11111111",
         .title = "Open task",
         .description = "",
@@ -416,7 +416,7 @@ test "cli: slugify includes closed/archived issues" {
     try ts.storage.createIssue(open_issue, null);
 
     // Create closed issue
-    const closed_issue = Issue{
+    const closed_issue: Issue = .{
         .id = "dots-22222222",
         .title = "Closed task",
         .description = "",

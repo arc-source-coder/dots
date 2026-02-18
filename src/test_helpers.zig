@@ -320,7 +320,7 @@ pub fn trimNewline(input: []const u8) []const u8 {
 }
 
 pub fn normalizeTreeOutput(allocator: std.mem.Allocator, output: []const u8) ![]u8 {
-    var normalized = std.ArrayList(u8){};
+    var normalized: std.ArrayList(u8) = .{};
     errdefer normalized.deinit(allocator);
 
     var lines = std.mem.splitScalar(u8, output, '\n');

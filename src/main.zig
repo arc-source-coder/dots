@@ -56,7 +56,7 @@ pub fn main() void {
 }
 
 fn run() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
     defer if (gpa.deinit() == .leak) @panic("memory leak detected");
     const allocator = gpa.allocator();
 
@@ -328,7 +328,7 @@ fn cmdAdd(allocator: Allocator, args: []const []const u8) !void {
     }
     defer if (resolved_parent) |p| allocator.free(p);
 
-    const issue = Issue{
+    const issue: Issue = .{
         .id = id,
         .title = title,
         .description = description,
@@ -800,7 +800,7 @@ const JsonIssue = struct {
 };
 
 fn writeIssueJson(issue: Issue, w: *std.Io.Writer) !void {
-    const json_issue = JsonIssue{
+    const json_issue: JsonIssue = .{
         .id = issue.id,
         .title = issue.title,
         .description = if (issue.description.len > 0) issue.description else null,
@@ -881,7 +881,7 @@ fn hydrateFromJsonl(allocator: Allocator, storage: *Storage, jsonl_path: []const
             break :blk Status.open;
         };
 
-        const issue = Issue{
+        const issue: Issue = .{
             .id = obj.id,
             .title = obj.title,
             .description = obj.description orelse "",

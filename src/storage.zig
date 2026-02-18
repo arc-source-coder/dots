@@ -443,7 +443,7 @@ fn parseFrontmatter(allocator: Allocator, content: []const u8) !ParseResult {
     else
         "";
 
-    var fm = Frontmatter{};
+    var fm: Frontmatter = .{};
     var blocks_list: std.ArrayList([]const u8) = .{};
     var allocated_title: ?[]const u8 = null;
     errdefer {
@@ -1426,7 +1426,7 @@ pub const Storage = struct {
         };
 
         // Create new issue with updated ID
-        const new_issue = Issue{
+        const new_issue: Issue = .{
             .id = new_id,
             .title = issue.title,
             .description = issue.description,

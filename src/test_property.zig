@@ -403,7 +403,7 @@ test "prop: lifecycle simulation maintains invariants" {
             var ts = openTestStorage(allocator, test_dir);
             defer ts.deinit();
 
-            var oracle = LifecycleOracle{};
+            var oracle: LifecycleOracle = .{};
             var ids: [LifecycleOracle.MAX_ISSUES]?[]const u8 = [_]?[]const u8{null} ** LifecycleOracle.MAX_ISSUES;
             var id_storage: [LifecycleOracle.MAX_ISSUES][32]u8 = undefined;
 
@@ -544,7 +544,7 @@ test "prop: transitive blocking chains" {
                 // All closed except the blocker
                 const status: Status = if (i == blocker_pos) .open else .closed;
                 const closed_at: ?[]const u8 = if (status == .closed) fixed_timestamp else null;
-                const issue = Issue{
+                const issue: Issue = .{
                     .id = ids[i],
                     .title = ids[i],
                     .description = "",
@@ -611,7 +611,7 @@ test "prop: parent-child close constraint" {
             defer ts.deinit();
 
             // Create parent
-            const parent = Issue{
+            const parent: Issue = .{
                 .id = "parent",
                 .title = "Parent",
                 .description = "",
@@ -635,7 +635,7 @@ test "prop: parent-child close constraint" {
                 const is_closed = args.children_closed[i];
                 if (!is_closed) all_closed = false;
 
-                const child = Issue{
+                const child: Issue = .{
                     .id = id,
                     .title = id,
                     .description = "",
@@ -695,7 +695,7 @@ test "prop: priority ordering in list" {
             for (0..6) |i| {
                 var id_buf: [16]u8 = undefined;
                 const id = std.fmt.bufPrint(&id_buf, "pri-{d}", .{i}) catch return false;
-                const issue = Issue{
+                const issue: Issue = .{
                     .id = id,
                     .title = id,
                     .description = "",
@@ -746,7 +746,7 @@ test "prop: status transition state machine" {
             defer ts.deinit();
 
             // Create issue
-            const issue = Issue{
+            const issue: Issue = .{
                 .id = "transition-test",
                 .title = "Transition Test",
                 .description = "",
@@ -833,7 +833,7 @@ test "prop: search finds exactly matching issues" {
 
                 var id_buf: [16]u8 = undefined;
                 const id = std.fmt.bufPrint(&id_buf, "search-{d}", .{i}) catch return false;
-                const issue = Issue{
+                const issue: Issue = .{
                     .id = id,
                     .title = title_buf[0..len],
                     .description = "",

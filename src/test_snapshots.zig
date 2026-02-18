@@ -15,8 +15,11 @@ test "snap: simple struct" {
         name: []const u8,
         value: i32,
     };
-    const data = TestStruct{ .name = "test", .value = 42 };
-    const oh = OhSnap{};
+    const data: TestStruct = .{
+        .name = "test",
+        .value = 42,
+    };
+    const oh: OhSnap = .{};
     try oh.snap(
         @src(),
         \\test_snapshots.test.snap: simple struct.TestStruct
@@ -62,7 +65,7 @@ test "snap: markdown frontmatter format" {
     defer allocator.free(content);
 
     // Normalize: replace dynamic ID and timestamp with placeholders
-    var normalized = std.ArrayList(u8){};
+    var normalized: std.ArrayList(u8) = .{};
     defer normalized.deinit(allocator);
 
     var lines = std.mem.splitScalar(u8, content, '\n');
@@ -78,7 +81,7 @@ test "snap: markdown frontmatter format" {
         }
     }
 
-    const oh = OhSnap{};
+    const oh: OhSnap = .{};
     try oh.snap(@src(),
         \\[]u8
         \\  "---
@@ -144,7 +147,7 @@ test "snap: json output format" {
     }.lessThan);
 
     // Build normalized output (just titles and priorities)
-    var output = std.ArrayList(u8){};
+    var output: std.ArrayList(u8) = .{};
     defer output.deinit(allocator);
 
     for (parsed.value) |issue| {
@@ -155,7 +158,7 @@ test "snap: json output format" {
         try output.appendSlice(allocator, line);
     }
 
-    const oh = OhSnap{};
+    const oh: OhSnap = .{};
     try oh.snap(@src(),
         \\[]u8
         \\  "First task (p0)
@@ -204,7 +207,7 @@ test "snap: tree output format" {
     const normalized = try normalizeTreeOutput(allocator, tree.stdout);
     defer allocator.free(normalized);
 
-    const oh = OhSnap{};
+    const oh: OhSnap = .{};
     // Tree shows parent with children indented
     try oh.snap(@src(),
         \\[]u8

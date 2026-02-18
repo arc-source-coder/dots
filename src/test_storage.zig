@@ -144,7 +144,7 @@ test "storage: ID prefix resolution" {
     defer ts.deinit();
 
     // Create an issue with a known ID
-    const issue = Issue{
+    const issue: Issue = .{
         .id = "abc123def456",
         .title = "Test",
         .description = "",
@@ -181,7 +181,7 @@ test "storage: ambiguous ID prefix errors" {
     defer ts.deinit();
 
     // Create two issues with same prefix
-    const issue1 = Issue{
+    const issue1: Issue = .{
         .id = "abc123111111",
         .title = "Test1",
         .description = "",
@@ -199,7 +199,7 @@ test "storage: ambiguous ID prefix errors" {
         std.debug.panic("create1: {}", .{err});
     };
 
-    const issue2 = Issue{
+    const issue2: Issue = .{
         .id = "abc123222222",
         .title = "Test2",
         .description = "",

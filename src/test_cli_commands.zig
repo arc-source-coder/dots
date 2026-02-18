@@ -203,7 +203,7 @@ test "cli: find help" {
 
     try std.testing.expect(isExitCode(help.term, 0));
 
-    const oh = OhSnap{};
+    const oh: OhSnap = .{};
     try oh.snap(@src(),
         \\[]u8
         \\  "Usage: dot find <query>
@@ -277,7 +277,7 @@ test "cli: find searches archive fields and orders results" {
 
     var ts = openTestStorage(allocator, test_dir);
 
-    const open_issue = Issue{
+    const open_issue: Issue = .{
         .id = "open-11111111",
         .title = "Open task",
         .description = "",
@@ -293,7 +293,7 @@ test "cli: find searches archive fields and orders results" {
     };
     try ts.storage.createIssue(open_issue, null);
 
-    const closed_issue = Issue{
+    const closed_issue: Issue = .{
         .id = "closed-22222222",
         .title = "Closed task",
         .description = "",
@@ -336,7 +336,7 @@ test "cli: find searches archive fields and orders results" {
     try std.testing.expect(isExitCode(find_created.term, 0));
     try std.testing.expect(isExitCode(find_closed.term, 0));
 
-    const oh = OhSnap{};
+    const oh: OhSnap = .{};
     try oh.snap(@src(),
         \\[]u8
         \\  "[open-11111111] o Open task
@@ -522,7 +522,7 @@ test "cli: tree help" {
 
     try std.testing.expect(isExitCode(help.term, 0));
 
-    const oh = OhSnap{};
+    const oh: OhSnap = .{};
     try oh.snap(@src(),
         \\[]u8
         \\  "Usage: dot tree [id]
@@ -586,7 +586,7 @@ test "cli: tree id shows specific root" {
     const normalized = try normalizeTreeOutput(allocator, tree.stdout);
     defer allocator.free(normalized);
 
-    const oh = OhSnap{};
+    const oh: OhSnap = .{};
     try oh.snap(@src(),
         \\[]u8
         \\  "[ID] ○ Parent one
@@ -640,7 +640,7 @@ test "cli: tree ignores missing parent" {
 
     try std.testing.expect(isExitCode(tree.term, 0));
 
-    const oh = OhSnap{};
+    const oh: OhSnap = .{};
     try oh.snap(@src(),
         \\[]u8
         \\  "[orphan-child] ○ Orphan child
@@ -697,7 +697,7 @@ test "cli: fix promotes orphan children" {
 
     try std.testing.expect(isExitCode(fix.term, 0));
 
-    const oh = OhSnap{};
+    const oh: OhSnap = .{};
     try oh.snap(@src(),
         \\[]u8
         \\  "Fixed 1 orphan parent(s), moved 1 file(s)
