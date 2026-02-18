@@ -187,13 +187,15 @@ test "snap: tree output format" {
     const parent_id = trimNewline(parent.stdout);
 
     // Add children
-    const child1 = runDot(allocator, &.{ "add", "Child one", "-P", parent_id }, test_dir) catch |err| {
+    const child1_result = runDot(allocator, &.{ "add", "Child one", "-P", parent_id }, test_dir);
+    const child1 = child1_result catch |err| {
         std.debug.panic("add child1: {}", .{err});
     };
     defer child1.deinit(allocator);
     const child1_id = trimNewline(child1.stdout);
 
-    const child2 = runDot(allocator, &.{ "add", "Child two", "-P", parent_id, "-a", child1_id }, test_dir) catch |err| {
+    const child2_result = runDot(allocator, &.{ "add", "Child two", "-P", parent_id, "-a", child1_id }, test_dir);
+    const child2 = child2_result catch |err| {
         std.debug.panic("add child2: {}", .{err});
     };
     defer child2.deinit(allocator);

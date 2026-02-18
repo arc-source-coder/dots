@@ -538,7 +538,7 @@ fn needsYamlQuoting(s: []const u8) bool {
 }
 
 /// Write a YAML-safe string value, quoting and escaping as needed
-fn writeYamlValue(buf: *std.ArrayList(u8), allocator: Allocator, value: []const u8) !void {
+fn writeYamlValue(allocator: Allocator, buf: *std.ArrayList(u8), value: []const u8) !void {
     if (!needsYamlQuoting(value)) {
         try buf.appendSlice(allocator, value);
         return;
@@ -564,7 +564,7 @@ fn serializeFrontmatter(allocator: Allocator, issue: Issue) ![]u8 {
 
     try buf.appendSlice(allocator, "---\n");
     try buf.appendSlice(allocator, "title: ");
-    try writeYamlValue(&buf, allocator, issue.title);
+    try writeYamlValue(allocator, &buf, issue.title);
     try buf.appendSlice(allocator, "\nstatus: ");
     try buf.appendSlice(allocator, issue.status.toString());
     try buf.appendSlice(allocator, "\npriority: ");
@@ -574,24 +574,24 @@ fn serializeFrontmatter(allocator: Allocator, issue: Issue) ![]u8 {
     try buf.appendSlice(allocator, priority_str);
 
     try buf.appendSlice(allocator, "\nissue-type: ");
-    try writeYamlValue(&buf, allocator, issue.issue_type);
+    try writeYamlValue(allocator, &buf, issue.issue_type);
 
     if (issue.assignee) |assignee| {
         try buf.appendSlice(allocator, "\nassignee: ");
-        try writeYamlValue(&buf, allocator, assignee);
+        try writeYamlValue(allocator, &buf, assignee);
     }
 
     try buf.appendSlice(allocator, "\ncreated-at: ");
-    try writeYamlValue(&buf, allocator, issue.created_at);
+    try writeYamlValue(allocator, &buf, issue.created_at);
 
     if (issue.closed_at) |closed_at| {
         try buf.appendSlice(allocator, "\nclosed-at: ");
-        try writeYamlValue(&buf, allocator, closed_at);
+        try writeYamlValue(allocator, &buf, closed_at);
     }
 
     if (issue.close_reason) |reason| {
         try buf.appendSlice(allocator, "\nclose-reason: ");
-        try writeYamlValue(&buf, allocator, reason);
+        try writeYamlValue(allocator, &buf, reason);
     }
 
     if (issue.blocks.len > 0) {
