@@ -1821,7 +1821,9 @@ pub fn civilFromDays(days: Days) Date {
         const s: u64 = shift_0;
         const n: u64 = (yrs % 4) * (16 * scale) +% s -% ypt;
         const m: u64 = n / (2048 * scale);
-        break :blk .{ if (m > 12) 1 else 0, s, if (m > 12) m - 12 else m };
+        const bump: u64 = if (m > 12) 1 else 0;
+        const month: u64 = if (m > 12) m - 12 else m;
+        break :blk .{ bump, s, month };
     } else blk: {
         const b: u64 = if (ypt < 3952 * scale) 1 else 0;
         const s: u64 = if (b == 1) shift_1 else shift_0;

@@ -7,7 +7,6 @@ const runDot = h.runDot;
 const trimNewline = h.trimNewline;
 const normalizeTreeOutput = h.normalizeTreeOutput;
 const setupTestDirOrPanic = h.setupTestDirOrPanic;
-const cleanupTestDirAndFree = h.cleanupTestDirAndFree;
 
 test "snap: simple struct" {
     // Test basic ohsnap functionality with a simple struct
@@ -33,10 +32,10 @@ test "snap: simple struct" {
 test "snap: markdown frontmatter format" {
     const allocator = std.testing.allocator;
 
-    const test_dir = setupTestDirOrPanic(allocator);
-    defer cleanupTestDirAndFree(allocator, test_dir);
+    var test_dir = setupTestDirOrPanic(allocator);
+    defer test_dir.cleanup();
 
-    const init = runDot(allocator, &.{"init"}, test_dir) catch |err| {
+    const init = runDot(allocator, &.{"init"}, test_dir.path) catch |err| {
         std.debug.panic("init: {}", .{err});
     };
     defer init.deinit(allocator);
@@ -46,7 +45,7 @@ test "snap: markdown frontmatter format" {
         "add", "Test snapshot task",
         "-p",  "1",
         "-d",  "This is a description",
-    }, test_dir) catch |err| {
+    }, test_dir.path) catch |err| {
         std.debug.panic("add: {}", .{err});
     };
     defer add.deinit(allocator);
@@ -54,7 +53,7 @@ test "snap: markdown frontmatter format" {
     const id = trimNewline(add.stdout);
 
     // Read the markdown file
-    const md_path = std.fmt.allocPrint(allocator, "{s}/.dots/{s}.md", .{ test_dir, id }) catch |err| {
+    const md_path = std.fmt.allocPrint(allocator, "{s}/.dots/{s}.md", .{ test_dir.path, id }) catch |err| {
         std.debug.panic("path: {}", .{err});
     };
     defer allocator.free(md_path);
@@ -100,26 +99,26 @@ test "snap: markdown frontmatter format" {
 test "snap: json output format" {
     const allocator = std.testing.allocator;
 
-    const test_dir = setupTestDirOrPanic(allocator);
-    defer cleanupTestDirAndFree(allocator, test_dir);
+    var test_dir = setupTestDirOrPanic(allocator);
+    defer test_dir.cleanup();
 
-    const init = runDot(allocator, &.{"init"}, test_dir) catch |err| {
+    const init = runDot(allocator, &.{"init"}, test_dir.path) catch |err| {
         std.debug.panic("init: {}", .{err});
     };
     defer init.deinit(allocator);
 
     // Add tasks
-    const add1 = runDot(allocator, &.{ "add", "First task", "-p", "0" }, test_dir) catch |err| {
+    const add1 = runDot(allocator, &.{ "add", "First task", "-p", "0" }, test_dir.path) catch |err| {
         std.debug.panic("add1: {}", .{err});
     };
     defer add1.deinit(allocator);
-    const add2 = runDot(allocator, &.{ "add", "Second task", "-p", "2" }, test_dir) catch |err| {
+    const add2 = runDot(allocator, &.{ "add", "Second task", "-p", "2" }, test_dir.path) catch |err| {
         std.debug.panic("add2: {}", .{err});
     };
     defer add2.deinit(allocator);
 
     // Get JSON output
-    const ls = runDot(allocator, &.{ "ls", "--json" }, test_dir) catch |err| {
+    const ls = runDot(allocator, &.{ "ls", "--json" }, test_dir.path) catch |err| {
         std.debug.panic("ls: {}", .{err});
     };
     defer ls.deinit(allocator);
@@ -170,16 +169,16 @@ test "snap: json output format" {
 test "snap: tree output format" {
     const allocator = std.testing.allocator;
 
-    const test_dir = setupTestDirOrPanic(allocator);
-    defer cleanupTestDirAndFree(allocator, test_dir);
+    var test_dir = setupTestDirOrPanic(allocator);
+    defer test_dir.cleanup();
 
-    const init = runDot(allocator, &.{"init"}, test_dir) catch |err| {
+    const init = runDot(allocator, &.{"init"}, test_dir.path) catch |err| {
         std.debug.panic("init: {}", .{err});
     };
     defer init.deinit(allocator);
 
     // Add parent
-    const parent = runDot(allocator, &.{ "add", "Parent task" }, test_dir) catch |err| {
+    const parent = runDot(allocator, &.{ "add", "Parent task" }, test_dir.path) catch |err| {
         std.debug.panic("add parent: {}", .{err});
     };
     defer parent.deinit(allocator);
@@ -187,21 +186,21 @@ test "snap: tree output format" {
     const parent_id = trimNewline(parent.stdout);
 
     // Add children
-    const child1_result = runDot(allocator, &.{ "add", "Child one", "-P", parent_id }, test_dir);
+    const child1_result = runDot(allocator, &.{ "add", "Child one", "-P", parent_id }, test_dir.path);
     const child1 = child1_result catch |err| {
         std.debug.panic("add child1: {}", .{err});
     };
     defer child1.deinit(allocator);
     const child1_id = trimNewline(child1.stdout);
 
-    const child2_result = runDot(allocator, &.{ "add", "Child two", "-P", parent_id, "-a", child1_id }, test_dir);
+    const child2_result = runDot(allocator, &.{ "add", "Child two", "-P", parent_id, "-a", child1_id }, test_dir.path);
     const child2 = child2_result catch |err| {
         std.debug.panic("add child2: {}", .{err});
     };
     defer child2.deinit(allocator);
 
     // Get tree output
-    const tree = runDot(allocator, &.{"tree"}, test_dir) catch |err| {
+    const tree = runDot(allocator, &.{"tree"}, test_dir.path) catch |err| {
         std.debug.panic("tree: {}", .{err});
     };
     defer tree.deinit(allocator);

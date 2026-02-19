@@ -648,7 +648,7 @@ pub const TZInfo = struct {
         var posix: ?Posix = null;
         if (!legacy) {
             if ((try reader.takeByte()) != '\n') return error.Malformed; // An rfc8536 footer must start with a newline
-            const footer_mem = reader.takeDelimiterExclusive('\n') catch |err| switch (err) {
+            const footer_mem = reader.takeDelimiter('\n') catch |err| switch (err) {
                 error.StreamTooLong => return error.OverlargeFooter, // Read more than reader buffer bytes, much larger than any reasonable POSIX TZ string
                 else => return err,
             };

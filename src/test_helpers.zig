@@ -239,37 +239,32 @@ pub const MultiProcess = struct {
     }
 };
 
-pub fn setupTestDir(allocator: std.mem.Allocator) ![]const u8 {
-    var rand_buf: [8]u8 = undefined;
-    std.crypto.random.bytes(&rand_buf);
+/// Cross-platform temporary directory for tests.
+/// Uses std.testing.tmpDir so cleanup is handled by the standard library,
+/// avoiding any hard-coded /tmp assumptions that break on Windows.
+pub const TestTmpDir = struct {
+    tmp: std.testing.TmpDir,
+    /// Absolute path to the temporary directory. Owned by this struct.
+    path: []const u8,
+    allocator: std.mem.Allocator,
 
-    const hex = std.fmt.bytesToHex(rand_buf, .lower);
-    const path = try std.fmt.allocPrint(allocator, "/tmp/dots-test-{s}", .{hex});
+    pub fn init(allocator: std.mem.Allocator) !TestTmpDir {
+        const tmp = std.testing.tmpDir(.{});
+        const path = try tmp.dir.realpathAlloc(allocator, ".");
+        return .{ .tmp = tmp, .path = path, .allocator = allocator };
+    }
 
-    try fs.makeDirAbsolute(path);
-    return path;
-}
+    pub fn cleanup(self: *TestTmpDir) void {
+        self.allocator.free(self.path);
+        self.tmp.cleanup();
+        self.* = undefined;
+    }
+};
 
-pub fn cleanupTestDir(path: []const u8) !void {
-    try fs.cwd().deleteTree(path);
-}
-
-pub fn cleanupTestDirOrPanic(path: []const u8) void {
-    cleanupTestDir(path) catch |err| {
-        std.debug.print("cleanup failed: {}\n", .{err});
-        @panic("cleanup failed");
-    };
-}
-
-pub fn setupTestDirOrPanic(allocator: std.mem.Allocator) []const u8 {
-    return setupTestDir(allocator) catch |err| {
+pub fn setupTestDirOrPanic(allocator: std.mem.Allocator) TestTmpDir {
+    return TestTmpDir.init(allocator) catch |err| {
         std.debug.panic("setup: {}", .{err});
     };
-}
-
-pub fn cleanupTestDirAndFree(allocator: std.mem.Allocator, path: []const u8) void {
-    cleanupTestDirOrPanic(path);
-    allocator.free(path);
 }
 
 // Helper to open storage in a test directory
@@ -277,20 +272,22 @@ pub fn cleanupTestDirAndFree(allocator: std.mem.Allocator, path: []const u8) voi
 pub const TestStorage = struct {
     storage: Storage,
     original_dir: fs.Dir,
-    test_dir_path: []const u8,
     allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator, test_dir: []const u8) !TestStorage {
-        const original_dir = fs.cwd();
+    pub fn init(allocator: std.mem.Allocator, tmp: *const TestTmpDir) !TestStorage {
+        // Open "." as an owned handle rather than capturing fs.cwd().
+        // On Windows, fs.cwd() returns the PEB CurrentDirectory.Handle which Windows
+        // closes and replaces every time SetCurrentDirectory is called, making it
+        // unsafe to store and reuse across cwd changes.
+        var original_dir = try fs.cwd().openDir(".", .{});
+        errdefer original_dir.close();
 
-        // Change to test directory
-        var dir = try fs.openDirAbsolute(test_dir, .{});
-        defer dir.close(); // Close after setAsCwd - we don't need to keep it open
+        var dir = try fs.openDirAbsolute(tmp.path, .{});
+        defer dir.close();
         try dir.setAsCwd();
 
         // Open storage (creates .dots in test dir)
         const storage = Storage.open(allocator) catch |err| {
-            // Restore original directory on error
             original_dir.setAsCwd() catch {}; // ziglint-ignore: Z026 - best effort cleanup
             return err;
         };
@@ -298,20 +295,23 @@ pub const TestStorage = struct {
         return .{
             .storage = storage,
             .original_dir = original_dir,
-            .test_dir_path = test_dir,
             .allocator = allocator,
         };
     }
 
     pub fn deinit(self: *TestStorage) void {
         self.storage.close();
-        self.original_dir.setAsCwd() catch {}; // ziglint-ignore: Z026 - cleanup failure is non-fatal
+        // Failing to restore cwd corrupts the entire test suite; panic rather than silently swallow.
+        self.original_dir.setAsCwd() catch |err| {
+            std.debug.panic("failed to restore cwd: {}", .{err});
+        };
+        self.original_dir.close();
         self.* = undefined;
     }
 };
 
-pub fn openTestStorage(allocator: std.mem.Allocator, dir: []const u8) TestStorage {
-    return TestStorage.init(allocator, dir) catch |err| {
+pub fn openTestStorage(allocator: std.mem.Allocator, tmp: *const TestTmpDir) TestStorage {
+    return TestStorage.init(allocator, tmp) catch |err| {
         std.debug.panic("open storage: {}", .{err});
     };
 }

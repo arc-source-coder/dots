@@ -7,17 +7,16 @@ const Issue = h.Issue;
 const fixed_timestamp = h.fixed_timestamp;
 const makeTestIssue = h.makeTestIssue;
 const setupTestDirOrPanic = h.setupTestDirOrPanic;
-const cleanupTestDirAndFree = h.cleanupTestDirAndFree;
 const openTestStorage = h.openTestStorage;
 
 test "storage: dependency cycle rejected" {
     // Test cycle detection at storage level
     const allocator = std.testing.allocator;
 
-    const test_dir = setupTestDirOrPanic(allocator);
-    defer cleanupTestDirAndFree(allocator, test_dir);
+    var test_dir = setupTestDirOrPanic(allocator);
+    defer test_dir.cleanup();
 
-    var ts = openTestStorage(allocator, test_dir);
+    var ts = openTestStorage(allocator, &test_dir);
     defer ts.deinit();
 
     // Create two issues
@@ -45,10 +44,10 @@ test "storage: delete cascade unblocks dependents" {
     // Test that deleting a blocker unblocks its dependents
     const allocator = std.testing.allocator;
 
-    const test_dir = setupTestDirOrPanic(allocator);
-    defer cleanupTestDirAndFree(allocator, test_dir);
+    var test_dir = setupTestDirOrPanic(allocator);
+    defer test_dir.cleanup();
 
-    var ts = openTestStorage(allocator, test_dir);
+    var ts = openTestStorage(allocator, &test_dir);
     defer ts.deinit();
 
     // Create blocker issue
@@ -92,10 +91,10 @@ test "storage: delete cascade unblocks dependents" {
 test "storage: delete parent cleans up child dependency refs" {
     const allocator = std.testing.allocator;
 
-    const test_dir = setupTestDirOrPanic(allocator);
-    defer cleanupTestDirAndFree(allocator, test_dir);
+    var test_dir = setupTestDirOrPanic(allocator);
+    defer test_dir.cleanup();
 
-    var ts = openTestStorage(allocator, test_dir);
+    var ts = openTestStorage(allocator, &test_dir);
     defer ts.deinit();
 
     // Create parent with child
@@ -137,10 +136,10 @@ test "storage: delete parent cleans up child dependency refs" {
 test "storage: ID prefix resolution" {
     const allocator = std.testing.allocator;
 
-    const test_dir = setupTestDirOrPanic(allocator);
-    defer cleanupTestDirAndFree(allocator, test_dir);
+    var test_dir = setupTestDirOrPanic(allocator);
+    defer test_dir.cleanup();
 
-    var ts = openTestStorage(allocator, test_dir);
+    var ts = openTestStorage(allocator, &test_dir);
     defer ts.deinit();
 
     // Create an issue with a known ID
@@ -174,10 +173,10 @@ test "storage: ID prefix resolution" {
 test "storage: ambiguous ID prefix errors" {
     const allocator = std.testing.allocator;
 
-    const test_dir = setupTestDirOrPanic(allocator);
-    defer cleanupTestDirAndFree(allocator, test_dir);
+    var test_dir = setupTestDirOrPanic(allocator);
+    defer test_dir.cleanup();
 
-    var ts = openTestStorage(allocator, test_dir);
+    var ts = openTestStorage(allocator, &test_dir);
     defer ts.deinit();
 
     // Create two issues with same prefix
@@ -225,10 +224,10 @@ test "storage: ambiguous ID prefix errors" {
 test "storage: resolve ignores parent folders without issue file" {
     const allocator = std.testing.allocator;
 
-    const test_dir = setupTestDirOrPanic(allocator);
-    defer cleanupTestDirAndFree(allocator, test_dir);
+    var test_dir = setupTestDirOrPanic(allocator);
+    defer test_dir.cleanup();
 
-    var ts = openTestStorage(allocator, test_dir);
+    var ts = openTestStorage(allocator, &test_dir);
     defer ts.deinit();
 
     const parent = makeTestIssue("parent-aaa", .open);
@@ -257,10 +256,10 @@ test "storage: resolve ignores parent folders without issue file" {
 test "storage: missing required frontmatter fields rejected" {
     const allocator = std.testing.allocator;
 
-    const test_dir = setupTestDirOrPanic(allocator);
-    defer cleanupTestDirAndFree(allocator, test_dir);
+    var test_dir = setupTestDirOrPanic(allocator);
+    defer test_dir.cleanup();
 
-    var ts = openTestStorage(allocator, test_dir);
+    var ts = openTestStorage(allocator, &test_dir);
     defer ts.deinit();
 
     // Write file with missing title
@@ -297,10 +296,10 @@ test "storage: missing required frontmatter fields rejected" {
 test "storage: invalid block id rejected" {
     const allocator = std.testing.allocator;
 
-    const test_dir = setupTestDirOrPanic(allocator);
-    defer cleanupTestDirAndFree(allocator, test_dir);
+    var test_dir = setupTestDirOrPanic(allocator);
+    defer test_dir.cleanup();
 
-    var ts = openTestStorage(allocator, test_dir);
+    var ts = openTestStorage(allocator, &test_dir);
     defer ts.deinit();
 
     const bad_blocks =

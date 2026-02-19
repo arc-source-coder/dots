@@ -18,7 +18,6 @@ const oracleListCount = h.oracleListCount;
 const oracleChildBlocked = h.oracleChildBlocked;
 const oracleUpdateClosed = h.oracleUpdateClosed;
 const setupTestDirOrPanic = h.setupTestDirOrPanic;
-const cleanupTestDirAndFree = h.cleanupTestDirAndFree;
 const openTestStorage = h.openTestStorage;
 
 test "prop: ready issues match oracle" {
@@ -31,10 +30,10 @@ test "prop: ready issues match oracle" {
         fn property(args: ReadyCase) bool {
             const allocator = std.testing.allocator;
 
-            const test_dir = setupTestDirOrPanic(allocator);
-            defer cleanupTestDirAndFree(allocator, test_dir);
+            var test_dir = setupTestDirOrPanic(allocator);
+            defer test_dir.cleanup();
 
-            var ts = openTestStorage(allocator, test_dir);
+            var ts = openTestStorage(allocator, &test_dir);
             defer ts.deinit();
 
             var id_bufs: [4][16]u8 = undefined;
@@ -100,10 +99,10 @@ test "prop: listIssues filter matches oracle" {
         fn property(args: ListCase) bool {
             const allocator = std.testing.allocator;
 
-            const test_dir = setupTestDirOrPanic(allocator);
-            defer cleanupTestDirAndFree(allocator, test_dir);
+            var test_dir = setupTestDirOrPanic(allocator);
+            defer test_dir.cleanup();
 
-            var ts = openTestStorage(allocator, test_dir);
+            var ts = openTestStorage(allocator, &test_dir);
             defer ts.deinit();
 
             var id_bufs: [6][16]u8 = undefined;
@@ -151,10 +150,10 @@ test "prop: tree children blocked flag matches oracle" {
         fn property(args: TreeCase) bool {
             const allocator = std.testing.allocator;
 
-            const test_dir = setupTestDirOrPanic(allocator);
-            defer cleanupTestDirAndFree(allocator, test_dir);
+            var test_dir = setupTestDirOrPanic(allocator);
+            defer test_dir.cleanup();
 
-            var ts = openTestStorage(allocator, test_dir);
+            var ts = openTestStorage(allocator, &test_dir);
             defer ts.deinit();
 
             var parent_buf: [16]u8 = undefined;
@@ -244,15 +243,15 @@ test "prop: update done sets closed_at" {
         fn property(args: UpdateCase) bool {
             const allocator = std.testing.allocator;
 
-            const test_dir = setupTestDirOrPanic(allocator);
-            defer cleanupTestDirAndFree(allocator, test_dir);
+            var test_dir = setupTestDirOrPanic(allocator);
+            defer test_dir.cleanup();
 
-            const init = runDot(allocator, &.{"init"}, test_dir) catch |err| {
+            const init = runDot(allocator, &.{"init"}, test_dir.path) catch |err| {
                 std.debug.panic("init: {}", .{err});
             };
             defer init.deinit(allocator);
 
-            const add = runDot(allocator, &.{ "add", "Update done test" }, test_dir) catch |err| {
+            const add = runDot(allocator, &.{ "add", "Update done test" }, test_dir.path) catch |err| {
                 std.debug.panic("add: {}", .{err});
             };
             defer add.deinit(allocator);
@@ -261,13 +260,13 @@ test "prop: update done sets closed_at" {
             if (id.len == 0) return false;
 
             const status = if (args.done) "done" else "open";
-            const update = runDot(allocator, &.{ "update", id, "--status", status }, test_dir) catch |err| {
+            const update = runDot(allocator, &.{ "update", id, "--status", status }, test_dir.path) catch |err| {
                 std.debug.panic("update: {}", .{err});
             };
             defer update.deinit(allocator);
             if (!isExitCode(update.term, 0)) return false;
 
-            const show = runDot(allocator, &.{ "show", id }, test_dir) catch |err| {
+            const show = runDot(allocator, &.{ "show", id }, test_dir.path) catch |err| {
                 std.debug.panic("show: {}", .{err});
             };
             defer show.deinit(allocator);
@@ -296,10 +295,10 @@ test "prop: unknown id errors" {
         fn property(args: UnknownCase) bool {
             const allocator = std.testing.allocator;
 
-            const test_dir = setupTestDirOrPanic(allocator);
-            defer cleanupTestDirAndFree(allocator, test_dir);
+            var test_dir = setupTestDirOrPanic(allocator);
+            defer test_dir.cleanup();
 
-            const init = runDot(allocator, &.{"init"}, test_dir) catch |err| {
+            const init = runDot(allocator, &.{"init"}, test_dir.path) catch |err| {
                 std.debug.panic("init: {}", .{err});
             };
             defer init.deinit(allocator);
@@ -310,14 +309,14 @@ test "prop: unknown id errors" {
             }
             const id = id_buf[0..];
 
-            const on_result = runDot(allocator, &.{ "on", id }, test_dir) catch |err| {
+            const on_result = runDot(allocator, &.{ "on", id }, test_dir.path) catch |err| {
                 std.debug.panic("on: {}", .{err});
             };
             defer on_result.deinit(allocator);
             if (!isExitCode(on_result.term, 1)) return false;
             if (std.mem.indexOf(u8, on_result.stderr, "Issue not found") == null) return false;
 
-            const rm_result = runDot(allocator, &.{ "rm", id }, test_dir) catch |err| {
+            const rm_result = runDot(allocator, &.{ "rm", id }, test_dir.path) catch |err| {
                 std.debug.panic("rm: {}", .{err});
             };
             defer rm_result.deinit(allocator);
@@ -339,10 +338,10 @@ test "prop: invalid dependency rejected" {
         fn property(args: DepCase) bool {
             const allocator = std.testing.allocator;
 
-            const test_dir = setupTestDirOrPanic(allocator);
-            defer cleanupTestDirAndFree(allocator, test_dir);
+            var test_dir = setupTestDirOrPanic(allocator);
+            defer test_dir.cleanup();
 
-            const init = runDot(allocator, &.{"init"}, test_dir) catch |err| {
+            const init = runDot(allocator, &.{"init"}, test_dir.path) catch |err| {
                 std.debug.panic("init: {}", .{err});
             };
             defer init.deinit(allocator);
@@ -356,7 +355,7 @@ test "prop: invalid dependency rejected" {
 
             // Try to create with invalid dependency
             const flag: []const u8 = if (args.use_parent) "-P" else "-a";
-            const result = runDot(allocator, &.{ "add", "Test task", flag, fake_id }, test_dir) catch |err| {
+            const result = runDot(allocator, &.{ "add", "Test task", flag, fake_id }, test_dir.path) catch |err| {
                 std.debug.panic("add: {}", .{err});
             };
             defer allocator.free(result.stdout);
@@ -367,7 +366,7 @@ test "prop: invalid dependency rejected" {
             if (std.mem.indexOf(u8, result.stderr, "not found") == null) return false;
 
             // No issue should be created
-            const list = runDot(allocator, &.{ "ls", "--json" }, test_dir) catch |err| {
+            const list = runDot(allocator, &.{ "ls", "--json" }, test_dir.path) catch |err| {
                 std.debug.panic("ls: {}", .{err});
             };
             defer allocator.free(list.stdout);
@@ -397,10 +396,10 @@ test "prop: lifecycle simulation maintains invariants" {
         fn property(args: LifecycleCase) bool {
             const allocator = std.testing.allocator;
 
-            const test_dir = setupTestDirOrPanic(allocator);
-            defer cleanupTestDirAndFree(allocator, test_dir);
+            var test_dir = setupTestDirOrPanic(allocator);
+            defer test_dir.cleanup();
 
-            var ts = openTestStorage(allocator, test_dir);
+            var ts = openTestStorage(allocator, &test_dir);
             defer ts.deinit();
 
             var oracle: LifecycleOracle = .{};
@@ -526,10 +525,10 @@ test "prop: transitive blocking chains" {
             const allocator = std.testing.allocator;
             const chain_len = @max(2, (args.chain_length % 6) + 2); // 2-7
 
-            const test_dir = setupTestDirOrPanic(allocator);
-            defer cleanupTestDirAndFree(allocator, test_dir);
+            var test_dir = setupTestDirOrPanic(allocator);
+            defer test_dir.cleanup();
 
-            var ts = openTestStorage(allocator, test_dir);
+            var ts = openTestStorage(allocator, &test_dir);
             defer ts.deinit();
 
             // Create chain: issue[0] -> issue[1] -> ... -> issue[n-1]
@@ -604,10 +603,10 @@ test "prop: parent-child close constraint" {
             const allocator = std.testing.allocator;
             const num_children = @max(1, (args.num_children % 4) + 1);
 
-            const test_dir = setupTestDirOrPanic(allocator);
-            defer cleanupTestDirAndFree(allocator, test_dir);
+            var test_dir = setupTestDirOrPanic(allocator);
+            defer test_dir.cleanup();
 
-            var ts = openTestStorage(allocator, test_dir);
+            var ts = openTestStorage(allocator, &test_dir);
             defer ts.deinit();
 
             // Create parent
@@ -685,10 +684,10 @@ test "prop: priority ordering in list" {
         fn property(args: PriorityCase) bool {
             const allocator = std.testing.allocator;
 
-            const test_dir = setupTestDirOrPanic(allocator);
-            defer cleanupTestDirAndFree(allocator, test_dir);
+            var test_dir = setupTestDirOrPanic(allocator);
+            defer test_dir.cleanup();
 
-            var ts = openTestStorage(allocator, test_dir);
+            var ts = openTestStorage(allocator, &test_dir);
             defer ts.deinit();
 
             // Create issues with random priorities
@@ -739,10 +738,10 @@ test "prop: status transition state machine" {
         fn property(args: TransitionCase) bool {
             const allocator = std.testing.allocator;
 
-            const test_dir = setupTestDirOrPanic(allocator);
-            defer cleanupTestDirAndFree(allocator, test_dir);
+            var test_dir = setupTestDirOrPanic(allocator);
+            defer test_dir.cleanup();
 
-            var ts = openTestStorage(allocator, test_dir);
+            var ts = openTestStorage(allocator, &test_dir);
             defer ts.deinit();
 
             // Create issue
@@ -802,10 +801,10 @@ test "prop: search finds exactly matching issues" {
         fn property(args: SearchCase) bool {
             const allocator = std.testing.allocator;
 
-            const test_dir = setupTestDirOrPanic(allocator);
-            defer cleanupTestDirAndFree(allocator, test_dir);
+            var test_dir = setupTestDirOrPanic(allocator);
+            defer test_dir.cleanup();
 
-            var ts = openTestStorage(allocator, test_dir);
+            var ts = openTestStorage(allocator, &test_dir);
             defer ts.deinit();
 
             var foo_count: usize = 0;

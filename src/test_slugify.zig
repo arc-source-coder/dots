@@ -11,7 +11,6 @@ const runDot = h.runDot;
 const isExitCode = h.isExitCode;
 const JsonIssue = h.JsonIssue;
 const setupTestDirOrPanic = h.setupTestDirOrPanic;
-const cleanupTestDirAndFree = h.cleanupTestDirAndFree;
 const openTestStorage = h.openTestStorage;
 
 test "slugify: basic conversion" {
@@ -128,19 +127,19 @@ test "cli: slugify skips already-slugged issues from dot add" {
     const allocator = std.testing.allocator;
     const oh: OhSnap = .{};
 
-    const test_dir = setupTestDirOrPanic(allocator);
-    defer cleanupTestDirAndFree(allocator, test_dir);
+    var test_dir = setupTestDirOrPanic(allocator);
+    defer test_dir.cleanup();
 
     // Init
-    const init = try runDot(allocator, &.{"init"}, test_dir);
+    const init = try runDot(allocator, &.{"init"}, test_dir.path);
     defer init.deinit(allocator);
 
     // Create an issue - dot add already creates slugified IDs
-    const add = try runDot(allocator, &.{ "add", "Fix authentication bug" }, test_dir);
+    const add = try runDot(allocator, &.{ "add", "Fix authentication bug" }, test_dir.path);
     defer add.deinit(allocator);
 
     // Get the created issue ID
-    const ls1 = try runDot(allocator, &.{ "ls", "--json" }, test_dir);
+    const ls1 = try runDot(allocator, &.{ "ls", "--json" }, test_dir.path);
     defer ls1.deinit(allocator);
 
     const parsed1 = try std.json.parseFromSlice([]JsonIssue, allocator, ls1.stdout, .{
@@ -158,7 +157,7 @@ test "cli: slugify skips already-slugged issues from dot add" {
     ).expectEqual(std.mem.indexOf(u8, old_id, "fix-auth") != null);
 
     // Slugify - should skip since already slugified
-    const slugify = try runDot(allocator, &.{"slugify"}, test_dir);
+    const slugify = try runDot(allocator, &.{"slugify"}, test_dir.path);
     defer slugify.deinit(allocator);
     try std.testing.expect(isExitCode(slugify.term, 0));
 
@@ -169,7 +168,7 @@ test "cli: slugify skips already-slugged issues from dot add" {
     ).expectEqual(std.mem.indexOf(u8, slugify.stdout, "Slugified 0") != null);
 
     // ID should be unchanged
-    const ls2 = try runDot(allocator, &.{ "ls", "--json" }, test_dir);
+    const ls2 = try runDot(allocator, &.{ "ls", "--json" }, test_dir.path);
     defer ls2.deinit(allocator);
 
     const parsed2 = try std.json.parseFromSlice([]JsonIssue, allocator, ls2.stdout, .{
@@ -183,11 +182,11 @@ test "cli: slugify skips already-slugged issues from dot add" {
 test "cli: slugify preserves hex suffix from original ID" {
     const allocator = std.testing.allocator;
 
-    const test_dir = setupTestDirOrPanic(allocator);
-    defer cleanupTestDirAndFree(allocator, test_dir);
+    var test_dir = setupTestDirOrPanic(allocator);
+    defer test_dir.cleanup();
 
     // Create storage and set prefix to "dots"
-    var ts = openTestStorage(allocator, test_dir);
+    var ts = openTestStorage(allocator, &test_dir);
     try ts.storage.setConfig("prefix", "dots");
 
     const issue: Issue = .{
@@ -207,12 +206,12 @@ test "cli: slugify preserves hex suffix from original ID" {
     ts.deinit();
 
     // Slugify
-    const slugify = try runDot(allocator, &.{"slugify"}, test_dir);
+    const slugify = try runDot(allocator, &.{"slugify"}, test_dir.path);
     defer slugify.deinit(allocator);
     try std.testing.expect(isExitCode(slugify.term, 0));
 
     // Verify new ID preserves hex suffix
-    const ls = try runDot(allocator, &.{ "ls", "--json" }, test_dir);
+    const ls = try runDot(allocator, &.{ "ls", "--json" }, test_dir.path);
     defer ls.deinit(allocator);
 
     const parsed = try std.json.parseFromSlice([]JsonIssue, allocator, ls.stdout, .{
@@ -230,10 +229,10 @@ test "cli: slugify preserves hex suffix from original ID" {
 test "cli: slugify updates dependency references" {
     const allocator = std.testing.allocator;
 
-    const test_dir = setupTestDirOrPanic(allocator);
-    defer cleanupTestDirAndFree(allocator, test_dir);
+    var test_dir = setupTestDirOrPanic(allocator);
+    defer test_dir.cleanup();
 
-    var ts = openTestStorage(allocator, test_dir);
+    var ts = openTestStorage(allocator, &test_dir);
     try ts.storage.setConfig("prefix", "dots");
 
     // Create blocker issue
@@ -273,7 +272,7 @@ test "cli: slugify updates dependency references" {
     ts.deinit();
 
     // Slugify all
-    const slugify = try runDot(allocator, &.{"slugify"}, test_dir);
+    const slugify = try runDot(allocator, &.{"slugify"}, test_dir.path);
     defer slugify.deinit(allocator);
     try std.testing.expect(isExitCode(slugify.term, 0));
 
@@ -281,7 +280,7 @@ test "cli: slugify updates dependency references" {
     try std.testing.expect(std.mem.indexOf(u8, slugify.stdout, "Slugified 2") != null);
 
     // Re-open storage and list all issues to find the dependent
-    var ts2 = openTestStorage(allocator, test_dir);
+    var ts2 = openTestStorage(allocator, &test_dir);
     defer ts2.deinit();
 
     const all_issues = try ts2.storage.listIssues(null);
@@ -307,10 +306,10 @@ test "cli: slugify skips already-slugified IDs" {
     const allocator = std.testing.allocator;
     const oh: OhSnap = .{};
 
-    const test_dir = setupTestDirOrPanic(allocator);
-    defer cleanupTestDirAndFree(allocator, test_dir);
+    var test_dir = setupTestDirOrPanic(allocator);
+    defer test_dir.cleanup();
 
-    var ts = openTestStorage(allocator, test_dir);
+    var ts = openTestStorage(allocator, &test_dir);
     try ts.storage.setConfig("prefix", "dots");
 
     // Create issue with already-slugified ID
@@ -331,7 +330,7 @@ test "cli: slugify skips already-slugified IDs" {
     ts.deinit();
 
     // Slugify - should skip
-    const slugify = try runDot(allocator, &.{"slugify"}, test_dir);
+    const slugify = try runDot(allocator, &.{"slugify"}, test_dir.path);
     defer slugify.deinit(allocator);
     try std.testing.expect(isExitCode(slugify.term, 0));
 
@@ -342,7 +341,7 @@ test "cli: slugify skips already-slugified IDs" {
     ).expectEqual(std.mem.indexOf(u8, slugify.stdout, "Slugified 0") != null);
 
     // ID should be unchanged
-    const ls = try runDot(allocator, &.{ "ls", "--json" }, test_dir);
+    const ls = try runDot(allocator, &.{ "ls", "--json" }, test_dir.path);
     defer ls.deinit(allocator);
 
     const parsed = try std.json.parseFromSlice([]JsonIssue, allocator, ls.stdout, .{
@@ -359,10 +358,10 @@ test "cli: slugify prop: preserves issue count" {
             const allocator = std.testing.allocator;
             const n = @min(args.count % 5, 4); // 0-4 issues
 
-            const test_dir = setupTestDirOrPanic(allocator);
-            defer cleanupTestDirAndFree(allocator, test_dir);
+            var test_dir = setupTestDirOrPanic(allocator);
+            defer test_dir.cleanup();
 
-            var ts = openTestStorage(allocator, test_dir);
+            var ts = openTestStorage(allocator, &test_dir);
             ts.storage.setConfig("prefix", "dots") catch return false;
 
             var id_buf: [20]u8 = undefined;
@@ -374,11 +373,11 @@ test "cli: slugify prop: preserves issue count" {
             }
             ts.deinit();
 
-            const slugify = runDot(allocator, &.{"slugify"}, test_dir) catch return false;
+            const slugify = runDot(allocator, &.{"slugify"}, test_dir.path) catch return false;
             defer slugify.deinit(allocator);
             if (!isExitCode(slugify.term, 0)) return false;
 
-            const ls = runDot(allocator, &.{ "ls", "--json" }, test_dir) catch return false;
+            const ls = runDot(allocator, &.{ "ls", "--json" }, test_dir.path) catch return false;
             defer ls.deinit(allocator);
 
             const parsed = std.json.parseFromSlice([]JsonIssue, allocator, ls.stdout, .{
@@ -395,10 +394,10 @@ test "cli: slugify prop: preserves issue count" {
 test "cli: slugify includes closed/archived issues" {
     const allocator = std.testing.allocator;
 
-    const test_dir = setupTestDirOrPanic(allocator);
-    defer cleanupTestDirAndFree(allocator, test_dir);
+    var test_dir = setupTestDirOrPanic(allocator);
+    defer test_dir.cleanup();
 
-    var ts = openTestStorage(allocator, test_dir);
+    var ts = openTestStorage(allocator, &test_dir);
     try ts.storage.setConfig("prefix", "dots");
 
     // Create open issue
@@ -435,7 +434,7 @@ test "cli: slugify includes closed/archived issues" {
     ts.deinit();
 
     // Slugify all
-    const slugify = try runDot(allocator, &.{"slugify"}, test_dir);
+    const slugify = try runDot(allocator, &.{"slugify"}, test_dir.path);
     defer slugify.deinit(allocator);
     try std.testing.expect(isExitCode(slugify.term, 0));
 
