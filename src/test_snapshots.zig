@@ -45,6 +45,7 @@ test "snap: markdown frontmatter format" {
         "add", "Test snapshot task",
         "-p",  "1",
         "-d",  "This is a description",
+        "-s",  "test",
     }, test_dir.path) catch |err| {
         std.debug.panic("add: {}", .{err});
     };
@@ -96,76 +97,6 @@ test "snap: markdown frontmatter format" {
     ).expectEqual(normalized.items);
 }
 
-test "snap: json output format" {
-    const allocator = std.testing.allocator;
-
-    var test_dir = setupTestDirOrPanic(allocator);
-    defer test_dir.cleanup();
-
-    const init = runDot(allocator, &.{"init"}, test_dir.path) catch |err| {
-        std.debug.panic("init: {}", .{err});
-    };
-    defer init.deinit(allocator);
-
-    // Add tasks
-    const add1 = runDot(allocator, &.{ "add", "First task", "-p", "0" }, test_dir.path) catch |err| {
-        std.debug.panic("add1: {}", .{err});
-    };
-    defer add1.deinit(allocator);
-    const add2 = runDot(allocator, &.{ "add", "Second task", "-p", "2" }, test_dir.path) catch |err| {
-        std.debug.panic("add2: {}", .{err});
-    };
-    defer add2.deinit(allocator);
-
-    // Get JSON output
-    const ls = runDot(allocator, &.{ "ls", "--json" }, test_dir.path) catch |err| {
-        std.debug.panic("ls: {}", .{err});
-    };
-    defer ls.deinit(allocator);
-
-    // Parse and re-serialize with stable ordering for snapshot
-    const JsonIssueSnap = struct {
-        id: []const u8,
-        title: []const u8,
-        status: []const u8,
-        priority: i64,
-    };
-
-    const parsed = std.json.parseFromSlice([]JsonIssueSnap, allocator, ls.stdout, .{
-        .ignore_unknown_fields = true,
-    }) catch |err| {
-        std.debug.panic("parse: {}", .{err});
-    };
-    defer parsed.deinit();
-
-    // Sort by priority for stable output
-    std.mem.sort(JsonIssueSnap, parsed.value, {}, struct {
-        fn lessThan(_: void, a: JsonIssueSnap, b: JsonIssueSnap) bool {
-            return a.priority < b.priority;
-        }
-    }.lessThan);
-
-    // Build normalized output (just titles and priorities)
-    var output: std.ArrayList(u8) = .{};
-    defer output.deinit(allocator);
-
-    for (parsed.value) |issue| {
-        const line = std.fmt.allocPrint(allocator, "{s} (p{d})\n", .{ issue.title, issue.priority }) catch |err| {
-            std.debug.panic("fmt: {}", .{err});
-        };
-        defer allocator.free(line);
-        try output.appendSlice(allocator, line);
-    }
-
-    const oh: OhSnap = .{};
-    try oh.snap(@src(),
-        \\[]u8
-        \\  "First task (p0)
-        \\Second task (p2)
-        \\"
-    ).expectEqual(output.items);
-}
-
 test "snap: tree output format" {
     const allocator = std.testing.allocator;
 
@@ -178,7 +109,7 @@ test "snap: tree output format" {
     defer init.deinit(allocator);
 
     // Add parent
-    const parent = runDot(allocator, &.{ "add", "Parent task" }, test_dir.path) catch |err| {
+    const parent = runDot(allocator, &.{ "add", "Parent task", "-s", "test" }, test_dir.path) catch |err| {
         std.debug.panic("add parent: {}", .{err});
     };
     defer parent.deinit(allocator);
@@ -186,14 +117,14 @@ test "snap: tree output format" {
     const parent_id = trimNewline(parent.stdout);
 
     // Add children
-    const child1_result = runDot(allocator, &.{ "add", "Child one", "-P", parent_id }, test_dir.path);
+    const child1_result = runDot(allocator, &.{ "add", "Child one", "-P", parent_id, "-s", "test" }, test_dir.path);
     const child1 = child1_result catch |err| {
         std.debug.panic("add child1: {}", .{err});
     };
     defer child1.deinit(allocator);
     const child1_id = trimNewline(child1.stdout);
 
-    const child2_result = runDot(allocator, &.{ "add", "Child two", "-P", parent_id, "-a", child1_id }, test_dir.path);
+    const child2_result = runDot(allocator, &.{ "add", "Child two", "-P", parent_id, "-a", child1_id, "-s", "test" }, test_dir.path);
     const child2 = child2_result catch |err| {
         std.debug.panic("add child2: {}", .{err});
     };

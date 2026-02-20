@@ -9,7 +9,6 @@ const archive_dir = ".dots/archive";
 const max_path_len = 512; // Maximum path length for file operations
 const max_id_len = 128; // Maximum ID length (validated in validateId)
 const max_issue_file_size = 1024 * 1024; // 1MB max issue file
-const max_config_size = 64 * 1024; // 64KB max config file
 const default_priority: i64 = 2; // Default priority for new issues
 
 // Errors
@@ -613,256 +612,60 @@ fn serializeFrontmatter(allocator: Allocator, issue: Issue) ![]u8 {
     return buf.toOwnedSlice(allocator);
 }
 
-// Common abbreviations for slugify
-const abbrev_map = std.StaticStringMap([]const u8).initComptime(.{
-    .{ "authentication", "auth" },
-    .{ "authorization", "authz" },
-    .{ "configuration", "config" },
-    .{ "application", "app" },
-    .{ "database", "db" },
-    .{ "implementation", "impl" },
-    .{ "environment", "env" },
-    .{ "development", "dev" },
-    .{ "production", "prod" },
-    .{ "repository", "repo" },
-    .{ "function", "fn" },
-    .{ "parameter", "param" },
-    .{ "parameters", "params" },
-    .{ "initialize", "init" },
-    .{ "initialization", "init" },
-    .{ "message", "msg" },
-    .{ "messages", "msgs" },
-    .{ "request", "req" },
-    .{ "response", "resp" },
-    .{ "temporary", "tmp" },
-    .{ "directory", "dir" },
-    .{ "document", "doc" },
-    .{ "documents", "docs" },
-    .{ "documentation", "docs" },
-    .{ "management", "mgmt" },
-    .{ "information", "info" },
-    .{ "notification", "notif" },
-    .{ "notifications", "notifs" },
-    .{ "connection", "conn" },
-    .{ "transaction", "txn" },
-    .{ "transactions", "txns" },
-    .{ "synchronization", "sync" },
-    .{ "asynchronous", "async" },
-    .{ "specification", "spec" },
-    .{ "specifications", "specs" },
-    .{ "validation", "valid" },
-    .{ "generation", "gen" },
-    .{ "interface", "iface" },
-    .{ "property", "prop" },
-    .{ "properties", "props" },
-    .{ "attribute", "attr" },
-    .{ "attributes", "attrs" },
-    .{ "administrator", "admin" },
-    .{ "administration", "admin" },
-    .{ "communication", "comm" },
-    .{ "utility", "util" },
-    .{ "utilities", "utils" },
-    .{ "dependency", "dep" },
-    .{ "dependencies", "deps" },
-    .{ "operation", "op" },
-    .{ "operations", "ops" },
-    .{ "expression", "expr" },
-    .{ "reference", "ref" },
-    .{ "references", "refs" },
-    .{ "description", "desc" },
-    .{ "certificate", "cert" },
-    .{ "certificates", "certs" },
-    .{ "maximum", "max" },
-    .{ "minimum", "min" },
-    .{ "number", "num" },
-    .{ "string", "str" },
-    .{ "integer", "int" },
-    .{ "boolean", "bool" },
-    .{ "character", "char" },
-    .{ "source", "src" },
-    .{ "destination", "dest" },
-    .{ "previous", "prev" },
-    .{ "current", "curr" },
-    .{ "original", "orig" },
-    .{ "address", "addr" },
-    .{ "memory", "mem" },
-    .{ "buffer", "buf" },
-    .{ "allocator", "alloc" },
-    .{ "context", "ctx" },
-    .{ "argument", "arg" },
-    .{ "arguments", "args" },
-    .{ "package", "pkg" },
-    .{ "packages", "pkgs" },
-    .{ "library", "lib" },
-    .{ "libraries", "libs" },
-    .{ "command", "cmd" },
-    .{ "execute", "exec" },
-    .{ "execution", "exec" },
-    .{ "continue", "cont" },
-    .{ "index", "idx" },
-    .{ "length", "len" },
-    .{ "position", "pos" },
-    .{ "iterator", "iter" },
-    .{ "pointer", "ptr" },
-    .{ "object", "obj" },
-    .{ "exception", "exc" },
-    .{ "calculate", "calc" },
-    .{ "calculation", "calc" },
-    .{ "average", "avg" },
-    .{ "version", "ver" },
-    .{ "permission", "perm" },
-    .{ "permissions", "perms" },
-    .{ "password", "pwd" },
-    .{ "standard", "std" },
-    .{ "receive", "recv" },
-    .{ "callback", "cb" },
-    .{ "accumulator", "acc" },
-    .{ "condition", "cond" },
-    .{ "constant", "const" },
-    .{ "definition", "def" },
-    .{ "error", "err" },
-    .{ "server", "srv" },
-    .{ "service", "svc" },
-    .{ "services", "svcs" },
-    .{ "middleware", "mw" },
-    .{ "controller", "ctrl" },
-    .{ "variable", "var" },
-    .{ "variables", "vars" },
-    .{ "template", "tmpl" },
-    .{ "element", "elem" },
-    .{ "elements", "elems" },
-    .{ "protocol", "proto" },
-    .{ "statistics", "stats" },
-    .{ "component", "comp" },
-    .{ "components", "comps" },
-});
+/// Generate the next sequential ID for a given scope.
+/// Scans the .dots directory for existing `{scope}-NNN.md` files,
+/// finds the highest number, and returns `{scope}-{NNN+1}`.
+pub fn nextId(allocator: Allocator, dir: fs.Dir, scope: []const u8) ![]u8 {
+    var highest: u32 = 0;
 
-const max_slug_len: usize = 30;
-const max_slug_words: usize = 3;
+    // Scan main dots dir
+    scanHighestId(dir, scope, &highest);
 
-/// Convert title to URL-safe slug (max 3 words, 30 chars)
-/// Example: "Fix User Authentication Bug" -> "fix-user-auth"
-pub fn slugify(allocator: Allocator, title: []const u8) ![]u8 {
-    if (title.len == 0) {
-        return allocator.dupe(u8, "untitled");
+    // Scan archive dir
+    if (dir.openDir("archive", .{ .iterate = true })) |archive_dir_handle| {
+        var ad = archive_dir_handle;
+        defer ad.close();
+        scanHighestId(ad, scope, &highest);
+    } else |_| {}
+
+    const next = highest + 1;
+    if (next > 999) {
+        return std.fmt.allocPrint(allocator, "{s}-{d:0>4}", .{ scope, next });
     }
+    return std.fmt.allocPrint(allocator, "{s}-{d:0>3}", .{ scope, next });
+}
 
-    var result: std.ArrayList(u8) = .{};
-    errdefer result.deinit(allocator);
-
-    var word_start: usize = 0;
-    var in_word = false;
-    var word_count: usize = 0;
-
-    for (title, 0..) |c, i| {
-        const is_alnum = std.ascii.isAlphanumeric(c);
-
-        if (is_alnum and !in_word) {
-            word_start = i;
-            in_word = true;
-        } else if (!is_alnum and in_word) {
-            // End of word - process it
-            try appendWord(allocator, &result, title[word_start..i]);
-            word_count += 1;
-            in_word = false;
-            if (result.items.len >= max_slug_len or word_count >= max_slug_words) break;
+fn scanHighestId(dir: fs.Dir, scope: []const u8, highest: *u32) void {
+    var iter = dir.iterate();
+    while (iter.next() catch null) |entry| {
+        if (entry.kind == .file and std.mem.endsWith(u8, entry.name, ".md")) {
+            const id = entry.name[0 .. entry.name.len - 3];
+            if (extractScopeNumber(id, scope)) |num| {
+                if (num > highest.*) highest.* = num;
+            }
+        } else if (entry.kind == .directory and !std.mem.eql(u8, entry.name, "archive")) {
+            // Recurse into subdirectories (parent folders)
+            var subdir = dir.openDir(entry.name, .{ .iterate = true }) catch continue;
+            defer subdir.close();
+            scanHighestId(subdir, scope, highest);
         }
     }
-
-    // Handle last word
-    if (in_word and result.items.len < max_slug_len and word_count < max_slug_words) {
-        try appendWord(allocator, &result, title[word_start..]);
-    }
-
-    // Truncate at word boundary if over limit
-    if (result.items.len > max_slug_len) {
-        var truncate_at = max_slug_len;
-        while (truncate_at > 0 and result.items[truncate_at - 1] != '-') : (truncate_at -= 1) {}
-        if (truncate_at > 0) truncate_at -= 1; // Remove trailing hyphen
-        result.shrinkRetainingCapacity(truncate_at);
-    }
-
-    // Remove trailing hyphen
-    while (result.items.len > 0 and result.items[result.items.len - 1] == '-') {
-        result.shrinkRetainingCapacity(result.items.len - 1);
-    }
-
-    if (result.items.len == 0) {
-        result.deinit(allocator);
-        return allocator.dupe(u8, "untitled");
-    }
-
-    return result.toOwnedSlice(allocator);
 }
 
-fn appendWord(allocator: Allocator, result: *std.ArrayList(u8), word: []const u8) !void {
-    if (word.len == 0) return;
+/// Extract the numeric suffix from an ID matching `{scope}-{NNN}`.
+/// Returns null if the ID doesn't match the expected pattern.
+fn extractScopeNumber(id: []const u8, scope: []const u8) ?u32 {
+    // Must start with "{scope}-"
+    if (id.len <= scope.len + 1) return null;
+    if (!std.mem.startsWith(u8, id, scope)) return null;
+    if (id[scope.len] != '-') return null;
 
-    // Add hyphen separator if not first word
-    if (result.items.len > 0) {
-        try result.append(allocator, '-');
+    const suffix = id[scope.len + 1 ..];
+    // Must be all digits
+    for (suffix) |c| {
+        if (!std.ascii.isDigit(c)) return null;
     }
-
-    // Lowercase the word for lookup
-    var lower_buf: [64]u8 = undefined;
-    if (word.len <= lower_buf.len) {
-        for (word, 0..) |c, i| {
-            lower_buf[i] = std.ascii.toLower(c);
-        }
-        const lower = lower_buf[0..word.len];
-
-        // Check abbreviation map
-        if (abbrev_map.get(lower)) |abbrev| {
-            try result.appendSlice(allocator, abbrev);
-            return;
-        }
-    }
-
-    // No abbreviation - append lowercase word
-    for (word) |c| {
-        try result.append(allocator, std.ascii.toLower(c));
-    }
-}
-
-// ID generation - {prefix}-{slug}-{8 hex chars}
-pub fn generateId(allocator: Allocator, prefix: []const u8) ![]u8 {
-    return generateIdWithTitle(allocator, prefix, null);
-}
-
-pub fn generateIdWithTitle(allocator: Allocator, prefix: []const u8, title: ?[]const u8) ![]u8 {
-    var rand_bytes: [4]u8 = undefined;
-    std.crypto.random.bytes(&rand_bytes);
-    const hex = std.fmt.bytesToHex(rand_bytes, .lower);
-
-    if (title) |t| {
-        const slug = try slugify(allocator, t);
-        defer allocator.free(slug);
-        return std.fmt.allocPrint(allocator, "{s}-{s}-{s}", .{ prefix, slug, hex });
-    } else {
-        return std.fmt.allocPrint(allocator, "{s}-{s}", .{ prefix, hex });
-    }
-}
-
-pub fn getOrCreatePrefix(allocator: Allocator, storage: *Storage) ![]const u8 {
-    // Try to get prefix from config
-    if (try storage.getConfig("prefix")) |prefix| {
-        return prefix;
-    }
-
-    // Auto-detect from directory name
-    const cwd = fs.cwd();
-    var path_buf: [fs.max_path_bytes]u8 = undefined;
-    const path = try cwd.realpath(".", &path_buf);
-    const basename = fs.path.basename(path);
-
-    // Strip trailing hyphens
-    var prefix = std.mem.trimEnd(u8, basename, "-");
-    if (prefix.len == 0) prefix = "dot";
-
-    // Store it in config for future use
-    try storage.setConfig("prefix", prefix);
-
-    return allocator.dupe(u8, prefix);
+    return std.fmt.parseInt(u32, suffix, 10) catch null;
 }
 
 pub const Storage = struct {
@@ -1413,140 +1216,6 @@ pub const Storage = struct {
             // Skip parent file (same name as folder)
             if (std.mem.eql(u8, child_id, folder_name)) continue;
             try self.removeDependencyReferences(child_id);
-        }
-    }
-
-    /// Rename an issue to a new ID, updating all dependency references
-    pub fn renameIssue(self: *Storage, old_id: []const u8, new_id: []const u8) !void {
-        try validateId(old_id);
-        try validateId(new_id);
-
-        if (std.mem.eql(u8, old_id, new_id)) return; // No-op if same
-
-        // Check new ID doesn't already exist
-        if (try self.issueExists(new_id)) {
-            return StorageError.IssueAlreadyExists;
-        }
-
-        // Get the issue
-        var issue = try self.getIssue(old_id) orelse return StorageError.IssueNotFound;
-        defer issue.deinit(self.allocator);
-
-        // Find current path
-        const old_path = try self.findIssuePath(old_id);
-        defer self.allocator.free(old_path);
-
-        // Check if it's a parent (has folder)
-        const is_parent = std.mem.indexOf(u8, old_path, "/") != null and blk: {
-            const folder_name = old_path[0..std.mem.indexOf(u8, old_path, "/").?];
-            break :blk std.mem.eql(u8, folder_name, old_id);
-        };
-
-        // Create new issue with updated ID
-        const new_issue: Issue = .{
-            .id = new_id,
-            .title = issue.title,
-            .description = issue.description,
-            .status = issue.status,
-            .priority = issue.priority,
-            .issue_type = issue.issue_type,
-            .assignee = issue.assignee,
-            .created_at = issue.created_at,
-            .closed_at = issue.closed_at,
-            .close_reason = issue.close_reason,
-            .blocks = issue.blocks,
-            .parent = issue.parent,
-        };
-
-        const content = try serializeFrontmatter(self.allocator, new_issue);
-        defer self.allocator.free(content);
-
-        if (is_parent) {
-            // Parent issue: rename folder and file inside
-            var new_path_buf: [max_path_len]u8 = undefined;
-            const new_fmt_result = std.fmt.bufPrint(&new_path_buf, "{s}/{s}.md", .{ new_id, new_id });
-            const new_path = new_fmt_result catch return StorageError.IoError;
-
-            // Rename folder first
-            try self.dots_dir.rename(old_id, new_id);
-
-            // Write new content to new path (old file was renamed with folder)
-            var old_file_new_folder_buf: [max_path_len]u8 = undefined;
-            const old_file_fmt_result = std.fmt.bufPrint(&old_file_new_folder_buf, "{s}/{s}.md", .{ new_id, old_id });
-            const old_file_in_new_folder = old_file_fmt_result catch return StorageError.IoError;
-
-            // Write new file before deleting old
-            try writeFileAtomic(self.dots_dir, new_path, content);
-            self.dots_dir.deleteFile(old_file_in_new_folder) catch |err| switch (err) {
-                error.FileNotFound => {},
-                else => return err,
-            };
-        } else {
-            // Simple file or child: just rename
-            var new_path_buf: [max_path_len]u8 = undefined;
-            const new_path = if (issue.parent) |parent| blk: {
-                const child_fmt_result = std.fmt.bufPrint(&new_path_buf, "{s}/{s}.md", .{ parent, new_id });
-                break :blk child_fmt_result catch return StorageError.IoError;
-            } else blk: {
-                const root_fmt_result = std.fmt.bufPrint(&new_path_buf, "{s}.md", .{new_id});
-                break :blk root_fmt_result catch return StorageError.IoError;
-            };
-
-            // Write new file first, then delete old
-            try writeFileAtomic(self.dots_dir, new_path, content);
-            self.dots_dir.deleteFile(old_path) catch |err| switch (err) {
-                error.FileNotFound => {},
-                else => return err,
-            };
-        }
-
-        // Update all dependency references
-        try self.updateDependencyReferences(old_id, new_id);
-    }
-
-    /// Update all references from old_id to new_id in other issues' blocks arrays
-    fn updateDependencyReferences(self: *Storage, old_id: []const u8, new_id: []const u8) !void {
-        const issues = try self.listAllIssuesIncludingArchived();
-        defer freeIssues(self.allocator, issues);
-
-        for (issues) |issue| {
-            // Check if this issue references the old ID
-            var has_reference = false;
-            for (issue.blocks) |b| {
-                if (std.mem.eql(u8, b, old_id)) {
-                    has_reference = true;
-                    break;
-                }
-            }
-
-            if (!has_reference) continue;
-
-            // Build new blocks with updated reference
-            var new_blocks: std.ArrayList([]const u8) = .{};
-            errdefer {
-                for (new_blocks.items) |b| self.allocator.free(b);
-                new_blocks.deinit(self.allocator);
-            }
-
-            for (issue.blocks) |b| {
-                const replacement = if (std.mem.eql(u8, b, old_id)) new_id else b;
-                const duped = try self.allocator.dupe(u8, replacement);
-                try new_blocks.append(self.allocator, duped);
-            }
-
-            const blocks_slice = try new_blocks.toOwnedSlice(self.allocator);
-            defer {
-                for (blocks_slice) |b| self.allocator.free(b);
-                self.allocator.free(blocks_slice);
-            }
-
-            const path = try self.findIssuePath(issue.id);
-            defer self.allocator.free(path);
-
-            const updated_content = try serializeFrontmatter(self.allocator, issue.withBlocks(blocks_slice));
-            defer self.allocator.free(updated_content);
-
-            try writeFileAtomic(self.dots_dir, path, updated_content);
         }
     }
 
@@ -2180,97 +1849,5 @@ pub const Storage = struct {
             error.PathAlreadyExists => {},
             else => return err,
         };
-    }
-
-    // Config stored in .dots/config as simple key=value lines
-    pub fn getConfig(self: *Storage, key: []const u8) !?[]const u8 {
-        const file = self.dots_dir.openFile("config", .{}) catch |err| switch (err) {
-            error.FileNotFound => return null,
-            else => return err,
-        };
-        defer file.close();
-
-        const content = try file.readToEndAlloc(self.allocator, max_config_size);
-        defer self.allocator.free(content);
-
-        var lines = std.mem.splitScalar(u8, content, '\n');
-        while (lines.next()) |line| {
-            const eq_idx = std.mem.indexOf(u8, line, "=") orelse continue;
-            if (std.mem.eql(u8, line[0..eq_idx], key)) {
-                // ziglint-ignore: Z017 (false positive: dupe returns ![]u8 but function returns !?[]const u8)
-                return try self.allocator.dupe(u8, line[eq_idx + 1 ..]);
-            }
-        }
-
-        return null;
-    }
-
-    pub fn setConfig(self: *Storage, key: []const u8, value: []const u8) !void {
-        // Read existing config
-        var config = std.StringHashMap([]const u8).init(self.allocator);
-        defer {
-            var iter = config.iterator();
-            while (iter.next()) |entry| {
-                self.allocator.free(entry.key_ptr.*);
-                self.allocator.free(entry.value_ptr.*);
-            }
-            config.deinit();
-        }
-
-        const file = self.dots_dir.openFile("config", .{}) catch |err| switch (err) {
-            error.FileNotFound => null,
-            else => return err,
-        };
-
-        if (file) |f| {
-            defer f.close();
-            const content = try f.readToEndAlloc(self.allocator, max_config_size);
-            defer self.allocator.free(content);
-
-            var lines = std.mem.splitScalar(u8, content, '\n');
-            while (lines.next()) |line| {
-                const eq_idx = std.mem.indexOf(u8, line, "=") orelse continue;
-                const k = try self.allocator.dupe(u8, line[0..eq_idx]);
-                const v = self.allocator.dupe(u8, line[eq_idx + 1 ..]) catch |err| {
-                    self.allocator.free(k);
-                    return err;
-                };
-                const result = config.fetchPut(k, v) catch |err| {
-                    self.allocator.free(k);
-                    self.allocator.free(v);
-                    return err;
-                };
-                // Free old entry if duplicate key in file
-                if (result) |old| {
-                    self.allocator.free(old.key);
-                    self.allocator.free(old.value);
-                }
-            }
-        }
-
-        // Update or add key
-        if (config.fetchRemove(key)) |removed| {
-            self.allocator.free(removed.key);
-            self.allocator.free(removed.value);
-        }
-        const k = try self.allocator.dupe(u8, key);
-        errdefer self.allocator.free(k);
-        const v = try self.allocator.dupe(u8, value);
-        errdefer self.allocator.free(v);
-        try config.put(k, v);
-
-        // Build config content
-        var buf: std.ArrayList(u8) = .{};
-        defer buf.deinit(self.allocator);
-
-        var iter = config.iterator();
-        while (iter.next()) |entry| {
-            try buf.appendSlice(self.allocator, entry.key_ptr.*);
-            try buf.append(self.allocator, '=');
-            try buf.appendSlice(self.allocator, entry.value_ptr.*);
-            try buf.append(self.allocator, '\n');
-        }
-
-        try writeFileAtomic(self.dots_dir, "config", buf.items);
     }
 };

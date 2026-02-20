@@ -7,7 +7,6 @@ const Status = h.Status;
 const Issue = h.Issue;
 const LifecycleOracle = h.LifecycleOracle;
 const OpType = h.OpType;
-const JsonIssue = h.JsonIssue;
 const fixed_timestamp = h.fixed_timestamp;
 const makeTestIssue = h.makeTestIssue;
 const runDot = h.runDot;
@@ -251,7 +250,7 @@ test "prop: update done sets closed_at" {
             };
             defer init.deinit(allocator);
 
-            const add = runDot(allocator, &.{ "add", "Update done test" }, test_dir.path) catch |err| {
+            const add = runDot(allocator, &.{ "add", "Update done test", "-s", "test" }, test_dir.path) catch |err| {
                 std.debug.panic("add: {}", .{err});
             };
             defer add.deinit(allocator);
@@ -355,7 +354,7 @@ test "prop: invalid dependency rejected" {
 
             // Try to create with invalid dependency
             const flag: []const u8 = if (args.use_parent) "-P" else "-a";
-            const result = runDot(allocator, &.{ "add", "Test task", flag, fake_id }, test_dir.path) catch |err| {
+            const result = runDot(allocator, &.{ "add", "Test task", flag, fake_id, "-s", "test" }, test_dir.path) catch |err| {
                 std.debug.panic("add: {}", .{err});
             };
             defer allocator.free(result.stdout);
@@ -366,21 +365,14 @@ test "prop: invalid dependency rejected" {
             if (std.mem.indexOf(u8, result.stderr, "not found") == null) return false;
 
             // No issue should be created
-            const list = runDot(allocator, &.{ "ls", "--json" }, test_dir.path) catch |err| {
+            const list = runDot(allocator, &.{"ls"}, test_dir.path) catch |err| {
                 std.debug.panic("ls: {}", .{err});
             };
             defer allocator.free(list.stdout);
             defer allocator.free(list.stderr);
 
-            const parsed = std.json.parseFromSlice([]JsonIssue, allocator, list.stdout, .{
-                .ignore_unknown_fields = true,
-            }) catch |err| {
-                std.debug.panic("parse: {}", .{err});
-            };
-            defer parsed.deinit();
-
-            // Oracle: no issues should exist
-            return parsed.value.len == 0;
+            // Oracle: no issues should exist (empty output)
+            return std.mem.trim(u8, list.stdout, "\n ").len == 0;
         }
     }.property, .{ .iterations = 20, .seed = 0xDEADBEEF });
 }

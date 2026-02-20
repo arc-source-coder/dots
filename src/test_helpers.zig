@@ -484,10 +484,3 @@ pub const LifecycleOracle = struct {
 
 // Operation types for lifecycle simulation
 pub const OpType = enum { create, delete, set_open, set_active, set_closed, add_dep };
-
-pub const JsonIssue = struct {
-    id: []const u8,
-    title: []const u8,
-    status: []const u8,
-    priority: i64,
-};

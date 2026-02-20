@@ -2,7 +2,10 @@
     .name = .dots,
     .version = "0.6.4",
     .dependencies = .{
-        .ohsnap = .{ .url = "https://github.com/mnemnion/ohsnap/archive/refs/tags/v0.4.2.tar.gz", .hash = "ohsnap-0.4.2-iWxzyiGcAAAbUPJG3B6agP55LfeqGbtTOQ4PcgSGUb9-", },
+        .ohsnap = .{
+            .url = "https://github.com/mnemnion/ohsnap/archive/refs/tags/v0.4.2.tar.gz",
+            .hash = "ohsnap-0.4.2-iWxzyiGcAAAbUPJG3B6agP55LfeqGbtTOQ4PcgSGUb9-",
+        },
         .zcheck = .{ .path = "deps/zcheck" },
         .zeit = .{ .path = "deps/zeit" },
     },

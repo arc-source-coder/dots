@@ -66,7 +66,7 @@ test "cli: add creates markdown file" {
     };
     defer init.deinit(allocator);
 
-    const result = runDot(allocator, &.{ "add", "Test task" }, test_dir.path) catch |err| {
+    const result = runDot(allocator, &.{ "add", "Test task", "-s", "test" }, test_dir.path) catch |err| {
         std.debug.panic("add: {}", .{err});
     };
     defer result.deinit(allocator);
@@ -100,7 +100,7 @@ test "cli: purge removes archived dots" {
     defer init.deinit(allocator);
 
     // Add and close an issue to archive it
-    const add = runDot(allocator, &.{ "add", "To archive" }, test_dir.path) catch |err| {
+    const add = runDot(allocator, &.{ "add", "To archive", "-s", "test" }, test_dir.path) catch |err| {
         std.debug.panic("add: {}", .{err});
     };
     defer add.deinit(allocator);
@@ -164,7 +164,7 @@ test "cli: parent creates folder structure" {
     defer init.deinit(allocator);
 
     // Add parent
-    const parent = runDot(allocator, &.{ "add", "Parent task" }, test_dir.path) catch |err| {
+    const parent = runDot(allocator, &.{ "add", "Parent task", "-s", "test" }, test_dir.path) catch |err| {
         std.debug.panic("add parent: {}", .{err});
     };
     defer parent.deinit(allocator);
@@ -172,7 +172,7 @@ test "cli: parent creates folder structure" {
     const parent_id = trimNewline(parent.stdout);
 
     // Add child
-    const child = runDot(allocator, &.{ "add", "Child task", "-P", parent_id }, test_dir.path) catch |err| {
+    const child = runDot(allocator, &.{ "add", "Child task", "-P", parent_id, "-s", "test" }, test_dir.path) catch |err| {
         std.debug.panic("add child: {}", .{err});
     };
     defer child.deinit(allocator);
@@ -233,17 +233,17 @@ test "cli: find matches titles case-insensitively" {
     };
     defer init.deinit(allocator);
 
-    const add1 = runDot(allocator, &.{ "add", "Fix Bug" }, test_dir.path) catch |err| {
+    const add1 = runDot(allocator, &.{ "add", "Fix Bug", "-s", "test" }, test_dir.path) catch |err| {
         std.debug.panic("add1: {}", .{err});
     };
     defer add1.deinit(allocator);
 
-    const add2 = runDot(allocator, &.{ "add", "Write docs" }, test_dir.path) catch |err| {
+    const add2 = runDot(allocator, &.{ "add", "Write docs", "-s", "test" }, test_dir.path) catch |err| {
         std.debug.panic("add2: {}", .{err});
     };
     defer add2.deinit(allocator);
 
-    const add3 = runDot(allocator, &.{ "add", "BUG report" }, test_dir.path) catch |err| {
+    const add3 = runDot(allocator, &.{ "add", "BUG report", "-s", "test" }, test_dir.path) catch |err| {
         std.debug.panic("add3: {}", .{err});
     };
     defer add3.deinit(allocator);
@@ -376,138 +376,6 @@ test "cli: find searches archive fields and orders results" {
     ).expectEqual(find_closed.stderr);
 }
 
-test "cli: jsonl hydration imports issues and archives closed" {
-    const allocator = std.testing.allocator;
-
-    var test_dir = setupTestDirOrPanic(allocator);
-    defer test_dir.cleanup();
-
-    const jsonl_path = try std.fmt.allocPrint(allocator, "{s}/import.jsonl", .{test_dir.path});
-    defer allocator.free(jsonl_path);
-
-    const JsonlDependency = struct {
-        depends_on_id: []const u8,
-        type: ?[]const u8 = null,
-    };
-
-    const JsonlIssue = struct {
-        id: []const u8,
-        title: []const u8,
-        description: ?[]const u8 = null,
-        status: []const u8,
-        priority: i64,
-        issue_type: []const u8,
-        assignee: ?[]const u8 = null,
-        created_at: []const u8,
-        updated_at: ?[]const u8 = null,
-        closed_at: ?[]const u8 = null,
-        close_reason: ?[]const u8 = null,
-        dependencies: ?[]const JsonlDependency = null,
-    };
-
-    const issues = [_]JsonlIssue{
-        .{
-            .id = "parent",
-            .title = "Parent",
-            .status = "open",
-            .priority = 1,
-            .issue_type = "task",
-            .created_at = fixed_timestamp,
-        },
-        .{
-            .id = "child",
-            .title = "Child",
-            .status = "open",
-            .priority = 2,
-            .issue_type = "task",
-            .created_at = fixed_timestamp,
-            .dependencies = &.{.{ .depends_on_id = "parent", .type = "parent-child" }},
-        },
-        .{
-            .id = "blocker",
-            .title = "Blocker",
-            .status = "open",
-            .priority = 2,
-            .issue_type = "task",
-            .created_at = fixed_timestamp,
-        },
-        .{
-            .id = "blocked",
-            .title = "Blocked",
-            .status = "open",
-            .priority = 3,
-            .issue_type = "task",
-            .created_at = fixed_timestamp,
-            .dependencies = &.{.{ .depends_on_id = "blocker", .type = "blocks" }},
-        },
-        .{
-            .id = "closed",
-            .title = "Closed",
-            .status = "done",
-            .priority = 1,
-            .issue_type = "task",
-            .created_at = fixed_timestamp,
-            .closed_at = fixed_timestamp,
-        },
-    };
-
-    const file = try fs.createFileAbsolute(jsonl_path, .{});
-    defer file.close();
-
-    var buffer: [4096]u8 = undefined;
-    var writer = file.writer(&buffer);
-    const w = &writer.interface;
-    for (issues) |issue| {
-        try std.json.Stringify.value(issue, .{}, w);
-        try w.writeByte('\n');
-    }
-    try w.flush();
-    try file.sync();
-
-    const init = runDot(allocator, &.{ "init", "--from-jsonl", jsonl_path }, test_dir.path) catch |err| {
-        std.debug.panic("init: {}", .{err});
-    };
-    defer init.deinit(allocator);
-    try std.testing.expect(isExitCode(init.term, 0));
-
-    var ts = openTestStorage(allocator, &test_dir);
-    defer ts.deinit();
-
-    var parent = ts.storage.getIssue("parent") catch |err| {
-        std.debug.panic("parent: {}", .{err});
-    };
-    defer parent.?.deinit(allocator);
-    try std.testing.expect(parent != null);
-
-    var child = ts.storage.getIssue("child") catch |err| {
-        std.debug.panic("child: {}", .{err});
-    };
-    defer child.?.deinit(allocator);
-    try std.testing.expect(child != null);
-    try std.testing.expectEqualStrings("parent", child.?.parent.?);
-
-    var blocked = ts.storage.getIssue("blocked") catch |err| {
-        std.debug.panic("blocked: {}", .{err});
-    };
-    defer blocked.?.deinit(allocator);
-    try std.testing.expect(blocked != null);
-    try std.testing.expectEqual(@as(usize, 1), blocked.?.blocks.len);
-    try std.testing.expectEqualStrings("blocker", blocked.?.blocks[0]);
-
-    var closed = ts.storage.getIssue("closed") catch |err| {
-        std.debug.panic("closed: {}", .{err});
-    };
-    defer closed.?.deinit(allocator);
-    try std.testing.expect(closed != null);
-    try std.testing.expectEqual(Status.closed, closed.?.status);
-
-    const closed_list = ts.storage.listIssues(.closed) catch |err| {
-        std.debug.panic("list: {}", .{err});
-    };
-    defer storage_mod.freeIssues(allocator, closed_list);
-    try std.testing.expectEqual(@as(usize, 0), closed_list.len);
-}
-
 test "cli: tree help" {
     const allocator = std.testing.allocator;
 
@@ -553,18 +421,18 @@ test "cli: tree id shows specific root" {
     };
     defer init.deinit(allocator);
 
-    const parent1 = runDot(allocator, &.{ "add", "Parent one" }, test_dir.path) catch |err| {
+    const parent1 = runDot(allocator, &.{ "add", "Parent one", "-s", "test" }, test_dir.path) catch |err| {
         std.debug.panic("add parent1: {}", .{err});
     };
     defer parent1.deinit(allocator);
     const parent1_id = trimNewline(parent1.stdout);
 
-    const parent2 = runDot(allocator, &.{ "add", "Parent two" }, test_dir.path) catch |err| {
+    const parent2 = runDot(allocator, &.{ "add", "Parent two", "-s", "test" }, test_dir.path) catch |err| {
         std.debug.panic("add parent2: {}", .{err});
     };
     defer parent2.deinit(allocator);
 
-    const child = runDot(allocator, &.{ "add", "Child one", "-P", parent1_id }, test_dir.path) catch |err| {
+    const child = runDot(allocator, &.{ "add", "Child one", "-P", parent1_id, "-s", "test" }, test_dir.path) catch |err| {
         std.debug.panic("add child: {}", .{err});
     };
     defer child.deinit(allocator);

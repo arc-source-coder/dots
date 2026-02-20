@@ -11,7 +11,6 @@ const Issue = storage_mod.Issue;
 const Status = storage_mod.Status;
 
 const dots_dir = storage_mod.dots_dir;
-const max_jsonl_line_bytes = 1024 * 1024;
 const default_priority: i64 = 2;
 const min_priority: i64 = 0;
 const max_priority: i64 = 9;
@@ -34,8 +33,7 @@ const commands = [_]Command{
     .{ .names = &.{"update"}, .handler = cmdUpdate },
     .{ .names = &.{"close"}, .handler = cmdClose },
     .{ .names = &.{"purge"}, .handler = cmdPurge },
-    .{ .names = &.{"slugify"}, .handler = cmdSlugify },
-    .{ .names = &.{"init"}, .handler = cmdInitWrapper },
+    .{ .names = &.{"init"}, .handler = cmdInit },
     .{ .names = &.{ "help", "--help", "-h" }, .handler = cmdHelp },
     .{ .names = &.{ "--version", "-v" }, .handler = cmdVersion },
 };
@@ -60,7 +58,7 @@ fn run() !void {
     defer std.process.argsFree(allocator, args);
 
     if (args.len < 2) {
-        try cmdReady(allocator, &.{"--json"});
+        try cmdReady(allocator, &.{});
     } else {
         const cmd = args[1];
         if (findCommand(cmd)) |handler| {
@@ -79,10 +77,6 @@ fn run() !void {
     if (stderr_writer) |*writer| {
         try writer.interface.flush();
     }
-}
-
-fn cmdInitWrapper(allocator: Allocator, args: []const []const u8) !void {
-    return cmdInit(allocator, args);
 }
 
 fn cmdHelp(_: Allocator, _: []const []const u8) !void {
@@ -139,8 +133,6 @@ fn handleError(err: anyerror) noreturn {
         error.ChildrenNotClosed => fatal("Cannot close: children are not all closed\n", .{}),
         error.IssueNotFound => fatal("Issue not found\n", .{}),
         error.AmbiguousId => fatal("Ambiguous issue id\n", .{}),
-        error.InvalidJsonl => fatal("Invalid JSONL file\n", .{}),
-        error.JsonlLineTooLong => fatal("JSONL line too long\n", .{}),
         error.InvalidTimestamp => fatal("Invalid system time\n", .{}),
         error.TimestampOverflow => fatal("System time out of range\n", .{}),
         error.LocaltimeFailed => fatal("Failed to read local time\n", .{}),
@@ -193,26 +185,28 @@ const usage =
     \\Usage: dot [command] [options]
     \\
     \\Commands:
-    \\  dot "title"                  Quick add a dot
-    \\  dot add "title" [options]    Add a dot (-p priority, -d desc, -P parent, -a after)
-    \\  dot ls [--status S] [--json] List dots
-    \\  dot on <id>                  Start working (turn it on!)
-    \\  dot off <id> [-r reason]     Complete ("cross it off")
-    \\  dot rm <id>                  Remove a dot
-    \\  dot show <id>                Show dot details
-    \\  dot ready [--json]           Show unblocked dots
-    \\  dot tree [id]                Show hierarchy (with id: includes closed children)
-    \\  dot fix                      Repair missing parents
-    \\  dot find "query"             Search all dots (open first, then archived)
-    \\  dot purge                    Delete archived dots
-    \\  dot init                     Initialize .dots directory
+    \\  dot "title" -s <scope>           Quick add a dot
+    \\  dot add "title" -s <scope>       Add a dot (-p priority, -d desc, -P parent, -a after)
+    \\  dot ls [--status S]              List dots
+    \\  dot on <id>                      Start working (turn it on!)
+    \\  dot off <id> [-r reason]         Complete ("cross it off")
+    \\  dot rm <id>                      Remove a dot
+    \\  dot show <id>                    Show dot details
+    \\  dot ready                        Show unblocked dots
+    \\  dot tree [id]                    Show hierarchy
+    \\  dot fix                          Repair missing parents
+    \\  dot find "query"                 Search all dots
+    \\  dot purge                        Delete archived dots
+    \\  dot init                         Initialize .dots directory
+    \\
+    \\Scope: -s <scope> or DOTS_DEFAULT_SCOPE env var
     \\
     \\Examples:
-    \\  dot "Fix the bug"
-    \\  dot add "Design API" -p 1 -d "REST endpoints"
-    \\  dot add "Implement" -P dots-1 -a dots-2
-    \\  dot on dots-3
-    \\  dot off dots-3 -r "shipped"
+    \\  dot "Fix the bug" -s app
+    \\  dot add "Design API" -p 1 -d "REST endpoints" -s app
+    \\  dot add "Implement" -P app-001 -a app-002 -s app
+    \\  dot on app-003
+    \\  dot off app-003 -r "shipped"
     \\
 ;
 
@@ -237,27 +231,9 @@ fn gitAddDots(allocator: Allocator) !void {
     }
 }
 
-fn cmdInit(allocator: Allocator, args: []const []const u8) !void {
+fn cmdInit(allocator: Allocator, _: []const []const u8) !void {
     var storage = try openStorage(allocator);
     defer storage.close();
-
-    // Handle --from-jsonl flag for migration
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        if (getArg(args, &i, "--from-jsonl")) |jsonl_path| {
-            const result = try hydrateFromJsonl(allocator, &storage, jsonl_path);
-            if (result.imported > 0) {
-                try stdout().print("Imported {d} issues from {s}\n", .{ result.imported, jsonl_path });
-            }
-            if (result.skipped > 0) {
-                try stderr().print("Warning: skipped {d} issues due to errors\n", .{result.skipped});
-            }
-            if (result.dep_skipped > 0) {
-                try stderr().print("Warning: skipped {d} dependencies due to errors\n", .{result.dep_skipped});
-            }
-        }
-    }
-
     try gitAddDots(allocator);
 }
 
@@ -269,6 +245,7 @@ fn cmdAdd(allocator: Allocator, args: []const []const u8) !void {
     var priority: i64 = default_priority;
     var parent: ?[]const u8 = null;
     var after: ?[]const u8 = null;
+    var scope: ?[]const u8 = null;
 
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
@@ -281,6 +258,8 @@ fn cmdAdd(allocator: Allocator, args: []const []const u8) !void {
             parent = v;
         } else if (getArg(args, &i, "-a")) |v| {
             after = v;
+        } else if (getArg(args, &i, "-s")) |v| {
+            scope = v;
         } else if (title.len == 0 and args[i].len > 0 and args[i][0] != '-') {
             title = args[i];
         }
@@ -291,13 +270,20 @@ fn cmdAdd(allocator: Allocator, args: []const []const u8) !void {
         fatal("Error: parent and after cannot be the same issue\n", .{});
     }
 
+    // Resolve scope: -s flag > DOTS_DEFAULT_SCOPE env var > error
+    const resolved_scope = scope orelse blk: {
+        var env = try std.process.getEnvMap(allocator);
+        defer env.deinit();
+        if (env.get("DOTS_DEFAULT_SCOPE")) |s| {
+            break :blk s;
+        }
+        fatal("Error: scope required (-s <scope> or DOTS_DEFAULT_SCOPE)\n", .{});
+    };
+
     var storage = try openStorage(allocator);
     defer storage.close();
 
-    const prefix = try storage_mod.getOrCreatePrefix(allocator, &storage);
-    defer allocator.free(prefix);
-
-    const id = try storage_mod.generateIdWithTitle(allocator, prefix, title);
+    const id = try storage_mod.nextId(allocator, storage.dots_dir, resolved_scope);
     defer allocator.free(id);
 
     var ts_buf: [40]u8 = undefined;
@@ -308,7 +294,6 @@ fn cmdAdd(allocator: Allocator, args: []const []const u8) !void {
     var blocks_buf: [1][]const u8 = undefined;
     var resolved_after: ?[]const u8 = null;
     if (after) |after_id| {
-        // Resolve short ID if needed
         resolved_after = storage.resolveId(after_id) catch |err| switch (err) {
             error.IssueNotFound => fatal("After issue not found: {s}\n", .{after_id}),
             error.AmbiguousId => fatal("Ambiguous ID: {s}\n", .{after_id}),
@@ -350,13 +335,7 @@ fn cmdAdd(allocator: Allocator, args: []const []const u8) !void {
         else => return err,
     };
 
-    const w = stdout();
-    if (hasFlag(args, "--json")) {
-        try writeIssueJson(issue, w);
-        try w.writeByte('\n');
-    } else {
-        try w.print("{s}\n", .{id});
-    }
+    try stdout().print("{s}\n", .{id});
 }
 
 fn cmdList(allocator: Allocator, args: []const []const u8) !void {
@@ -372,36 +351,24 @@ fn cmdList(allocator: Allocator, args: []const []const u8) !void {
     const issues = try storage.listIssues(filter_status);
     defer storage_mod.freeIssues(allocator, issues);
 
-    try writeIssueList(issues, filter_status == null, hasFlag(args, "--json"));
+    try writeIssueList(issues, filter_status == null);
 }
 
-fn cmdReady(allocator: Allocator, args: []const []const u8) !void {
+fn cmdReady(allocator: Allocator, _: []const []const u8) !void {
     var storage = try openStorage(allocator);
     defer storage.close();
 
     const issues = try storage.getReadyIssues();
     defer storage_mod.freeIssues(allocator, issues);
 
-    try writeIssueList(issues, false, hasFlag(args, "--json"));
+    try writeIssueList(issues, false);
 }
 
-fn writeIssueList(issues: []const Issue, skip_done: bool, use_json: bool) !void {
+fn writeIssueList(issues: []const Issue, skip_done: bool) !void {
     const w = stdout();
-    if (use_json) {
-        try w.writeByte('[');
-        var first = true;
-        for (issues) |issue| {
-            if (skip_done and issue.status == .closed) continue;
-            if (!first) try w.writeByte(',');
-            first = false;
-            try writeIssueJson(issue, w);
-        }
-        try w.writeAll("]\n");
-    } else {
-        for (issues) |issue| {
-            if (skip_done and issue.status == .closed) continue;
-            try w.print("[{s}] {c} {s}\n", .{ issue.id, issue.status.char(), issue.title });
-        }
+    for (issues) |issue| {
+        if (skip_done and issue.status == .closed) continue;
+        try w.print("[{s}] {c} {s}\n", .{ issue.id, issue.status.char(), issue.title });
     }
 }
 
@@ -685,86 +652,6 @@ fn cmdPurge(allocator: Allocator, _: []const []const u8) !void {
     try stdout().writeAll("Archive purged\n");
 }
 
-fn cmdSlugify(allocator: Allocator, _: []const []const u8) !void {
-    var storage = try openStorage(allocator);
-    defer storage.close();
-
-    const prefix = try storage_mod.getOrCreatePrefix(allocator, &storage);
-    defer allocator.free(prefix);
-
-    // Slugify all issues (including archived)
-    const issues = try storage.listAllIssuesIncludingArchived();
-    defer storage_mod.freeIssues(allocator, issues);
-
-    var count: usize = 0;
-    for (issues) |issue| {
-        const renamed = try slugifyIssue(allocator, &storage, prefix, issue.id, issue.title);
-        if (renamed) {
-            count += 1;
-        }
-    }
-
-    try stdout().print("Slugified {d} issue(s)\n", .{count});
-    try gitAddDots(allocator);
-}
-
-fn slugifyIssue(
-    allocator: Allocator,
-    storage: *Storage,
-    prefix: []const u8,
-    old_id: []const u8,
-    title: []const u8,
-) !bool {
-    // Generate new slugified ID
-    const slug = try storage_mod.slugify(allocator, title);
-    defer allocator.free(slug);
-
-    // Extract hex suffix from old ID (last 8 chars after last hyphen)
-    var hex_suffix: []const u8 = "";
-    if (std.mem.lastIndexOf(u8, old_id, "-")) |last_hyphen| {
-        const suffix = old_id[last_hyphen + 1 ..];
-        if (suffix.len == 8) {
-            // Validate it's hex
-            var is_hex = true;
-            for (suffix) |c| {
-                if (!std.ascii.isHex(c)) {
-                    is_hex = false;
-                    break;
-                }
-            }
-            if (is_hex) hex_suffix = suffix;
-        }
-    }
-
-    // If no valid hex suffix, generate new one
-    var hex_buf: [8]u8 = undefined;
-    if (hex_suffix.len == 0) {
-        var rand_bytes: [4]u8 = undefined;
-        std.crypto.random.bytes(&rand_bytes);
-        const hex = std.fmt.bytesToHex(rand_bytes, .lower);
-        @memcpy(&hex_buf, &hex);
-        hex_suffix = &hex_buf;
-    }
-
-    const new_id = try std.fmt.allocPrint(allocator, "{s}-{s}-{s}", .{ prefix, slug, hex_suffix });
-    defer allocator.free(new_id);
-
-    // Skip if already slugified (same ID)
-    if (std.mem.eql(u8, old_id, new_id)) {
-        return false;
-    }
-
-    // Check if new ID already exists (collision)
-    if (try storage.issueExists(new_id)) {
-        try stderr().print("Skipping {s}: new ID {s} already exists\n", .{ old_id, new_id });
-        return false;
-    }
-
-    try storage.renameIssue(old_id, new_id);
-    try stdout().print("{s} -> {s}\n", .{ old_id, new_id });
-    return true;
-}
-
 fn formatTimestamp(allocator: Allocator, buf: []u8) ![]const u8 {
     var env = try std.process.getEnvMap(allocator);
     defer env.deinit();
@@ -774,169 +661,4 @@ fn formatTimestamp(allocator: Allocator, buf: []u8) ![]const u8 {
 
     const now = try zeit.instant(.{ .timezone = &local_tz });
     return now.time().bufPrint(buf, .rfc3339);
-}
-
-const JsonIssue = struct {
-    id: []const u8,
-    title: []const u8,
-    description: ?[]const u8 = null,
-    status: []const u8,
-    priority: i64,
-    issue_type: []const u8,
-    created_at: []const u8,
-    closed_at: ?[]const u8 = null,
-    close_reason: ?[]const u8 = null,
-};
-
-fn writeIssueJson(issue: Issue, w: *std.Io.Writer) !void {
-    const json_issue: JsonIssue = .{
-        .id = issue.id,
-        .title = issue.title,
-        .description = if (issue.description.len > 0) issue.description else null,
-        .status = issue.status.display(),
-        .priority = issue.priority,
-        .issue_type = issue.issue_type,
-        .created_at = issue.created_at,
-        .closed_at = issue.closed_at,
-        .close_reason = issue.close_reason,
-    };
-    try std.json.Stringify.value(json_issue, .{}, w);
-}
-
-// JSONL hydration for migration
-const JsonlDependency = struct {
-    depends_on_id: []const u8,
-    type: ?[]const u8 = null,
-};
-
-const JsonlIssue = struct {
-    id: []const u8,
-    title: []const u8,
-    description: ?[]const u8 = null,
-    status: []const u8,
-    priority: i64,
-    issue_type: []const u8,
-    assignee: ?[]const u8 = null,
-    created_at: []const u8,
-    updated_at: ?[]const u8 = null,
-    closed_at: ?[]const u8 = null,
-    close_reason: ?[]const u8 = null,
-    dependencies: ?[]const JsonlDependency = null,
-};
-
-const HydrateResult = struct {
-    imported: usize,
-    skipped: usize,
-    dep_skipped: usize,
-};
-
-fn hydrateFromJsonl(allocator: Allocator, storage: *Storage, jsonl_path: []const u8) !HydrateResult {
-    const file = fs.cwd().openFile(jsonl_path, .{}) catch |err| switch (err) {
-        error.FileNotFound => return .{ .imported = 0, .skipped = 0, .dep_skipped = 0 },
-        else => return err,
-    };
-    defer file.close();
-
-    var count: usize = 0;
-    var skipped: usize = 0;
-    var dep_skipped: usize = 0;
-    const read_buf = try allocator.alloc(u8, max_jsonl_line_bytes);
-    defer allocator.free(read_buf);
-    var file_reader = fs.File.Reader.init(file, read_buf);
-    const reader = &file_reader.interface;
-
-    while (true) {
-        const line = reader.takeDelimiter('\n') catch |err| switch (err) {
-            error.StreamTooLong => return error.JsonlLineTooLong,
-            error.ReadFailed => break,
-        } orelse break;
-
-        if (line.len == 0) continue;
-
-        const parsed = std.json.parseFromSlice(JsonlIssue, allocator, line, .{
-            .ignore_unknown_fields = true,
-        }) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            else => return error.InvalidJsonl,
-        };
-        defer parsed.deinit();
-
-        const obj = parsed.value;
-
-        // Normalize status
-        const status = Status.parse(obj.status) orelse blk: {
-            if (std.mem.eql(u8, obj.status, "in_progress")) break :blk Status.active;
-            if (std.mem.eql(u8, obj.status, "done")) break :blk Status.closed;
-            break :blk Status.open;
-        };
-
-        const issue: Issue = .{
-            .id = obj.id,
-            .title = obj.title,
-            .description = obj.description orelse "",
-            .status = status,
-            .priority = obj.priority,
-            .issue_type = obj.issue_type,
-            .assignee = obj.assignee,
-            .created_at = obj.created_at,
-            .closed_at = obj.closed_at,
-            .close_reason = obj.close_reason,
-            .blocks = &.{},
-        };
-
-        // Determine parent from dependencies
-        var parent_id: ?[]const u8 = null;
-        if (obj.dependencies) |deps| {
-            for (deps) |dep| {
-                const dep_type = dep.type orelse "blocks";
-                if (std.mem.eql(u8, dep_type, "parent-child")) {
-                    parent_id = dep.depends_on_id;
-                    break;
-                }
-            }
-        }
-
-        storage.createIssue(issue, parent_id) catch |err| switch (err) {
-            error.IssueAlreadyExists => continue, // Duplicate in JSONL, skip
-            error.OutOfMemory => return error.OutOfMemory,
-            else => {
-                skipped += 1;
-                continue;
-            },
-        };
-
-        // Add block dependencies
-        if (obj.dependencies) |deps| {
-            for (deps) |dep| {
-                const dep_type = dep.type orelse "blocks";
-                if (std.mem.eql(u8, dep_type, "blocks")) {
-                    storage.addDependency(obj.id, dep.depends_on_id, "blocks") catch |err| switch (err) {
-                        error.OutOfMemory => return error.OutOfMemory,
-                        else => {
-                            dep_skipped += 1;
-                        },
-                    };
-                }
-            }
-        }
-
-        count += 1;
-    }
-
-    // Second pass: archive all closed issues (after all imports, so parent-child relationships are complete)
-    const all_issues = try storage.listIssues(null);
-    defer storage_mod.freeIssues(allocator, all_issues);
-    for (all_issues) |iss| {
-        if (iss.status == .closed) {
-            storage.archiveIssue(iss.id) catch |err| switch (err) {
-                // ChildrenNotClosed is expected if parent closed but children aren't
-                error.ChildrenNotClosed => {},
-                // IssueNotFound can happen if already archived by parent move
-                error.IssueNotFound => {},
-                else => return err,
-            };
-        }
-    }
-
-    return .{ .imported = count, .skipped = skipped, .dep_skipped = dep_skipped };
 }

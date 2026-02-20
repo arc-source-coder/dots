@@ -4,6 +4,8 @@
 
 Major simplification of dots — new storage format, commands, and data model. Major source cleanup, code quality improvement, and reorganization.
 
+Context: I'm looking to fork this project. The code/state of the project pre-fork is a _massive_ mess (all logic in two gigantic source files).
+
 This plan now assumes a **hard break**:
 
 - No JSONL hydration path
