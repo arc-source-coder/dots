@@ -430,17 +430,28 @@ fn parseYamlValue(allocator: Allocator, value: []const u8) !YamlValue {
 
 fn parseFrontmatter(allocator: Allocator, content: []const u8) !ParseResult {
     // Find YAML delimiters
-    if (!std.mem.startsWith(u8, content, "---\n")) {
+    const frontmatter_start: usize = if (std.mem.startsWith(u8, content, "---\r\n"))
+        5
+    else if (std.mem.startsWith(u8, content, "---\n"))
+        4
+    else
         return StorageError.InvalidFrontmatter;
-    }
 
-    const end_marker = std.mem.indexOf(u8, content[4..], "\n---");
+    const end_marker = std.mem.indexOf(u8, content[frontmatter_start..], "\n---");
     if (end_marker == null) {
         return StorageError.InvalidFrontmatter;
     }
 
-    const yaml_content = content[4 .. 4 + end_marker.?];
-    const description_start = 4 + end_marker.? + 4; // skip "\n---"
+    const yaml_content = content[frontmatter_start .. frontmatter_start + end_marker.?];
+
+    // Skip "---" and an optional trailing line ending after the closing delimiter.
+    var description_start = frontmatter_start + end_marker.? + 4; // skip "\n---"
+    if (description_start < content.len and content[description_start] == '\r') {
+        description_start += 1;
+    }
+    if (description_start < content.len and content[description_start] == '\n') {
+        description_start += 1;
+    }
     const description = if (description_start < content.len)
         std.mem.trim(u8, content[description_start..], "\n\r\t ")
     else

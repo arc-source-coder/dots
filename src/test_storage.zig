@@ -293,6 +293,33 @@ test "storage: missing required frontmatter fields rejected" {
     try std.testing.expectError(error.InvalidFrontmatter, result2);
 }
 
+test "storage: parses CRLF frontmatter" {
+    const allocator = std.testing.allocator;
+
+    var test_dir = setupTestDirOrPanic(allocator);
+    defer test_dir.cleanup();
+
+    var ts = openTestStorage(allocator, &test_dir);
+    defer ts.deinit();
+
+    const crlf_frontmatter =
+        "---\r\n" ++
+        "title: Windows newline test\r\n" ++
+        "status: open\r\n" ++
+        "priority: 2\r\n" ++
+        "issue-type: task\r\n" ++
+        "created-at: 2024-01-01T00:00:00Z\r\n" ++
+        "---\r\n" ++
+        "Body from Windows\r\n";
+    try ts.storage.dots_dir.writeFile(.{ .sub_path = "crlf.md", .data = crlf_frontmatter });
+
+    var issue = (try ts.storage.getIssue("crlf")) orelse return error.TestUnexpectedResult;
+    defer issue.deinit(allocator);
+
+    try std.testing.expectEqualStrings("Windows newline test", issue.title);
+    try std.testing.expectEqualStrings("Body from Windows", issue.description);
+}
+
 test "storage: invalid block id rejected" {
     const allocator = std.testing.allocator;
 
