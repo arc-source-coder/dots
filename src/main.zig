@@ -28,7 +28,6 @@ const commands = [_]Command{
     .{ .names = &.{"show"}, .handler = cmdShow },
     .{ .names = &.{"ready"}, .handler = cmdReady },
     .{ .names = &.{"tree"}, .handler = cmdTree },
-    .{ .names = &.{"fix"}, .handler = cmdFix },
     .{ .names = &.{"find"}, .handler = cmdFind },
     .{ .names = &.{"update"}, .handler = cmdUpdate },
     .{ .names = &.{"close"}, .handler = cmdClose },
@@ -130,7 +129,6 @@ fn handleError(err: anyerror) noreturn {
         error.DependencyNotFound => fatal("Dependency not found\n", .{}),
         error.DependencyCycle => fatal("Dependency would create a cycle\n", .{}),
         error.IssueAlreadyExists => fatal("Issue already exists\n", .{}),
-        error.ChildrenNotClosed => fatal("Cannot close: children are not all closed\n", .{}),
         error.IssueNotFound => fatal("Issue not found\n", .{}),
         error.AmbiguousId => fatal("Ambiguous issue id\n", .{}),
         error.InvalidTimestamp => fatal("Invalid system time\n", .{}),
@@ -186,7 +184,7 @@ const usage =
     \\
     \\Commands:
     \\  dot "title" -s <scope>           Quick add a dot
-    \\  dot add "title" -s <scope>       Add a dot (-p priority, -d desc, -P parent, -a after)
+    \\  dot add "title" -s <scope>       Add a dot (-p priority, -d desc)
     \\  dot ls [--status S]              List dots
     \\  dot on <id>                      Start working (turn it on!)
     \\  dot off <id> [-r reason]         Complete ("cross it off")
@@ -194,7 +192,6 @@ const usage =
     \\  dot show <id>                    Show dot details
     \\  dot ready                        Show unblocked dots
     \\  dot tree [id]                    Show hierarchy
-    \\  dot fix                          Repair missing parents
     \\  dot find "query"                 Search all dots
     \\  dot purge                        Delete archived dots
     \\  dot init                         Initialize .dots directory
@@ -204,7 +201,6 @@ const usage =
     \\Examples:
     \\  dot "Fix the bug" -s app
     \\  dot add "Design API" -p 1 -d "REST endpoints" -s app
-    \\  dot add "Implement" -P app-001 -a app-002 -s app
     \\  dot on app-003
     \\  dot off app-003 -r "shipped"
     \\
@@ -243,8 +239,6 @@ fn cmdAdd(allocator: Allocator, args: []const []const u8) !void {
     var title: []const u8 = "";
     var description: []const u8 = "";
     var priority: i64 = default_priority;
-    var parent: ?[]const u8 = null;
-    var after: ?[]const u8 = null;
     var scope: ?[]const u8 = null;
 
     var i: usize = 0;
@@ -254,10 +248,6 @@ fn cmdAdd(allocator: Allocator, args: []const []const u8) !void {
             priority = std.math.clamp(p, min_priority, max_priority);
         } else if (getArg(args, &i, "-d")) |v| {
             description = v;
-        } else if (getArg(args, &i, "-P")) |v| {
-            parent = v;
-        } else if (getArg(args, &i, "-a")) |v| {
-            after = v;
         } else if (getArg(args, &i, "-s")) |v| {
             scope = v;
         } else if (title.len == 0 and args[i].len > 0 and args[i][0] != '-') {
@@ -266,9 +256,6 @@ fn cmdAdd(allocator: Allocator, args: []const []const u8) !void {
     }
 
     if (title.len == 0) fatal("Error: title required\n", .{});
-    if (parent != null and after != null and std.mem.eql(u8, parent.?, after.?)) {
-        fatal("Error: parent and after cannot be the same issue\n", .{});
-    }
 
     // Resolve scope: -s flag > DOTS_DEFAULT_SCOPE env var > error
     const resolved_scope = scope orelse blk: {
@@ -289,51 +276,19 @@ fn cmdAdd(allocator: Allocator, args: []const []const u8) !void {
     var ts_buf: [40]u8 = undefined;
     const now = try formatTimestamp(allocator, &ts_buf);
 
-    // Handle after dependency (blocks)
-    var blocks: []const []const u8 = &.{};
-    var blocks_buf: [1][]const u8 = undefined;
-    var resolved_after: ?[]const u8 = null;
-    if (after) |after_id| {
-        resolved_after = storage.resolveId(after_id) catch |err| switch (err) {
-            error.IssueNotFound => fatal("After issue not found: {s}\n", .{after_id}),
-            error.AmbiguousId => fatal("Ambiguous ID: {s}\n", .{after_id}),
-            else => return err,
-        };
-        blocks_buf[0] = resolved_after.?;
-        blocks = &blocks_buf;
-    }
-    defer if (resolved_after) |r| allocator.free(r);
-
-    // Resolve parent ID if provided
-    var resolved_parent: ?[]const u8 = null;
-    if (parent) |parent_id| {
-        resolved_parent = storage.resolveId(parent_id) catch |err| switch (err) {
-            error.IssueNotFound => fatal("Parent issue not found: {s}\n", .{parent_id}),
-            error.AmbiguousId => fatal("Ambiguous ID: {s}\n", .{parent_id}),
-            else => return err,
-        };
-    }
-    defer if (resolved_parent) |p| allocator.free(p);
-
     const issue: Issue = .{
         .id = id,
         .title = title,
         .description = description,
         .status = .open,
         .priority = priority,
-        .issue_type = "task",
-        .assignee = null,
         .created_at = now,
         .closed_at = null,
         .close_reason = null,
-        .blocks = blocks,
+        .blocks = &.{},
     };
 
-    storage.createIssue(issue, resolved_parent) catch |err| switch (err) {
-        error.DependencyNotFound => fatal("Parent or after issue not found\n", .{}),
-        error.DependencyCycle => fatal("Dependency would create a cycle\n", .{}),
-        else => return err,
-    };
+    try storage.createIssue(issue);
 
     try stdout().print("{s}\n", .{id});
 }
@@ -419,10 +374,7 @@ fn cmdOff(allocator: Allocator, args: []const []const u8) !void {
 
     for (results, 0..) |result, idx| {
         switch (result) {
-            .ok => |id| storage.updateStatus(id, .closed, now, reason) catch |err| switch (err) {
-                error.ChildrenNotClosed => fatal("Cannot close {s}: children are not all closed\n", .{id}),
-                else => return err,
-            },
+            .ok => |id| try storage.updateStatus(id, .closed, now, reason),
             .not_found => fatal("Issue not found: {s}\n", .{ids.items[idx]}),
             .ambiguous => fatal("Ambiguous ID: {s}\n", .{ids.items[idx]}),
         }
@@ -473,88 +425,9 @@ fn cmdShow(allocator: Allocator, args: []const []const u8) !void {
 }
 
 fn cmdTree(allocator: Allocator, args: []const []const u8) !void {
-    if (hasFlag(args, "--help") or hasFlag(args, "-h")) {
-        const w = stdout();
-        try w.writeAll(
-            \\Usage: dot tree [id]
-            \\
-            \\Show dot hierarchy.
-            \\
-            \\Without arguments: shows all open root dots and their children.
-            \\With id: shows that specific dot's tree (including closed children).
-            \\
-            \\Examples:
-            \\  dot tree                    Show all open root dots
-            \\  dot tree my-project         Show specific dot and its children
-            \\
-        );
-        return;
-    }
-    if (args.len > 1) fatal("Usage: dot tree [id]\n", .{});
-
-    var storage = try openStorage(allocator);
-    defer storage.close();
-
-    const all_issues = try storage.listIssues(null);
-    defer storage_mod.freeIssues(allocator, all_issues);
-
-    var status_by_id = try storage.buildStatusMap(all_issues);
-    defer status_by_id.deinit();
-
-    const w = stdout();
-    if (args.len == 1) {
-        const resolved = resolveIdActiveOrFatal(&storage, args[0]);
-        defer allocator.free(resolved);
-
-        var root = try storage.getIssue(resolved) orelse fatal("Issue not found: {s}\n", .{args[0]});
-        defer root.deinit(allocator);
-
-        try w.print("[{s}] {s} {s}\n", .{ root.id, root.status.symbol(), root.title });
-
-        const children = try storage.getChildrenWithStatusMap(root.id, &status_by_id);
-        defer storage_mod.freeChildIssues(allocator, children);
-
-        for (children) |child| {
-            const blocked_msg: []const u8 = if (child.blocked) " (blocked)" else "";
-            try w.print(
-                "  └─ [{s}] {s} {s}{s}\n",
-                .{ child.issue.id, child.issue.status.symbol(), child.issue.title, blocked_msg },
-            );
-        }
-        return;
-    }
-
-    const roots = try storage.getRootIssues();
-    defer storage_mod.freeIssues(allocator, roots);
-
-    for (roots) |root| {
-        try w.print("[{s}] {s} {s}\n", .{ root.id, root.status.symbol(), root.title });
-
-        const children = try storage.getChildrenWithStatusMap(root.id, &status_by_id);
-        defer storage_mod.freeChildIssues(allocator, children);
-
-        for (children) |child| {
-            const blocked_msg: []const u8 = if (child.blocked) " (blocked)" else "";
-            try w.print(
-                "  └─ [{s}] {s} {s}{s}\n",
-                .{ child.issue.id, child.issue.status.symbol(), child.issue.title, blocked_msg },
-            );
-        }
-    }
-}
-
-fn cmdFix(allocator: Allocator, _: []const []const u8) !void {
-    var storage = try openStorage(allocator);
-    defer storage.close();
-
-    const result = try storage.fixOrphans();
-
-    const w = stdout();
-    if (result.folders == 0) {
-        try w.writeAll("No fixes needed\n");
-        return;
-    }
-    try w.print("Fixed {d} orphan parent(s), moved {d} file(s)\n", .{ result.folders, result.files });
+    _ = allocator;
+    _ = args;
+    try stdout().writeAll("dot tree is temporarily unavailable during migration\n");
 }
 
 fn cmdFind(allocator: Allocator, args: []const []const u8) !void {
@@ -614,10 +487,7 @@ fn cmdUpdate(allocator: Allocator, args: []const []const u8) !void {
     var ts_buf: [40]u8 = undefined;
     const closed_at: ?[]const u8 = if (status == .closed) try formatTimestamp(allocator, &ts_buf) else null;
 
-    storage.updateStatus(resolved, status, closed_at, null) catch |err| switch (err) {
-        error.ChildrenNotClosed => fatal("Cannot close: children are not all closed\n", .{}),
-        else => return err,
-    };
+    try storage.updateStatus(resolved, status, closed_at, null);
 }
 
 fn cmdClose(allocator: Allocator, args: []const []const u8) !void {
@@ -638,10 +508,7 @@ fn cmdClose(allocator: Allocator, args: []const []const u8) !void {
     var ts_buf: [40]u8 = undefined;
     const now = try formatTimestamp(allocator, &ts_buf);
 
-    storage.updateStatus(resolved, .closed, now, reason) catch |err| switch (err) {
-        error.ChildrenNotClosed => fatal("Cannot close: children are not all closed\n", .{}),
-        else => return err,
-    };
+    try storage.updateStatus(resolved, .closed, now, reason);
 }
 
 fn cmdPurge(allocator: Allocator, _: []const []const u8) !void {

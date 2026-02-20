@@ -219,8 +219,8 @@ Goal: reduce risky cross-cutting code before changing IDs/layout.
 
 ### Phase 4: Command Changes
 
-1. Rename commands (add→create, ls→list, on→start, off→close)
-2. Update `create` to accept optional `-s <scope>` (uses `DOTS_DEFAULT_SCOPE` env var), auto-create scope
+1. Rename commands (add→open (alias: create), ls→list, on→start, off→close)
+2. Update `open` to accept optional `-s <scope>` (uses `DOTS_DEFAULT_SCOPE` env var), auto-create scope if not already done
 3. Update `show` to display blocking tree
 4. Update `tree` to display scopes
 5. Remove `slugify`, `blocked`, `update` commands
@@ -291,8 +291,8 @@ zig build test
 
 # Manual testing - basic flow
 dot init
-dot create "Fix bug" -s app
-dot create "Write doc" -s docs
+dot open "Fix bug" -s app
+dot open "Write doc" -s docs
 dot list
 dot list -s app
 dot show app-001
@@ -303,12 +303,12 @@ dot tree
 dot find "bug"
 
 # Testing default scope
-dot create "Task without prefix"  # Should fail (no DOTS_DEFAULT_SCOPE)
-DOTS_DEFAULT_SCOPE=app dot create "Task with default"  # Creates app-XXX
+dot open "Task without prefix"  # Should fail (no DOTS_DEFAULT_SCOPE)
+DOTS_DEFAULT_SCOPE=app dot open "Task with default"  # Creates app-XXX
 
 # Testing blocking behavior
-dot create "Setup DB" -s app              # app-001
-dot create "Fix login" -s app             # app-002
+dot open "Setup DB" -s app                # app-001
+dot open "Fix login" -s app               # app-002
 dot dep add app-002 app-001               # app-002 blocked by app-001
 dot start app-002                         # Should show warning about app-001 blocking it
 dot close app-001                         # Should free app-002 from blocking

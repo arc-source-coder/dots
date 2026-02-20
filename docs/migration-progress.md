@@ -23,47 +23,74 @@ Status as of 2026-02-20.
 - Removed JSON snapshot test from `test_snapshots.zig`
 - Simplified `cmdInit` to just open storage + git add
 
+### Phase 2: Core Data Model ✅
+
+- Removed `issue_type`, `assignee`, and `parent` fields from the active issue model/frontmatter paths
+- Removed related parent/child helper types and orphan-fix plumbing from storage
+- Kept `{PREFIX}-{NNN}` ID generation via scope directory scanning (`nextId` + archive-aware scan)
+- Retained explicit-scope creation flow (`-s` or `DOTS_DEFAULT_SCOPE`) with no config fallback
+
+### Phase 3: Storage Restructure ✅
+
+- Switched active storage to scope layout: `.dots/{scope}/{id}.md`
+- Updated create path logic to derive scope from ID and auto-create scope folders
+- Updated archive behavior to mirror scope layout: `.dots/archive/{scope}/{id}.md`
+- Removed parent-folder hierarchy logic (no folder promotion/orphan repair/root-child traversal)
+- Simplified deletion to single-issue file removal + dependency cleanup
+
+### Additional Migration Work Completed
+
+- Removed `fix` command from CLI dispatch and deleted `cmdFix`
+- Removed `-P` and `-a` flags from `dot add`
+- Updated `cmdAdd` to call `createIssue(issue)` (no parent argument)
+- Stubbed `cmdTree` during hierarchy removal to keep compilation stable
+- Updated help/usage text to remove parent/fix references
+
 ## LOC Reduction
 
 ~1,500 lines removed. Current Zig source: **4,949 lines** (4,299 code) across 9 files.
 
 ## Build Status
 
-- `zig build` — ✅ clean (debug mode works, LLVM dominance bug resolved)
-- `zig build test` — ✅ all enabled tests pass
-- `test_cli_commands.zig` — commented out in `tests.zig` (pre-existing Windows compatibility issues, not related to migration)
+- `zig build` — ✅ clean
+- `zig build test` — ✅ passing after Phase 2/3 expectation updates
+- `test_cli_commands.zig` — enabled in `tests.zig`
 
 ## Known Issues
 
-- `test_cli_commands.zig` has Windows-specific failures (pre-existing, unrelated to migration). Fixed one missing `-s` flag from Phase 0 changes.
-- Snapshot test `"snap: markdown frontmatter format"` still expects `issue-type: task` in frontmatter — will become stale after Phase 2 removes `issue_type`.
+- Unrecognized commands/flags can still fall through silently to quick-add parsing. This is tracked as follow-up work.
+- `tree` is intentionally stubbed during migration; tests currently only assert command viability, not final tree semantics.
+
+## Tree Command Bring-Back Notes
+
+- Re-enable `cmdTree` with scope-aware rendering over `.dots/{scope}/{id}.md`.
+- Define output contract:
+  - no-arg form shows scopes and issue rows
+  - optional filters/status behavior is explicit (and tested)
+  - stable ordering by scope name, then issue order (`priority`, `created_at`)
+- Add focused tests:
+  - scope aggregation counts
+  - mixed open/active/closed visibility rules
+  - archive exclusion/inclusion policy (explicit)
+  - snapshot for output shape on both Unix/Windows newline handling (snap: tree output format is currently stubbed - proper snapshot should be restored)
+- Remove temporary stub messaging and tighten CLI snapshots once behavior is finalized.
 
 ## Remaining Phases
 
-### Phase 2: Core Data Model
-
-- Remove `issue_type`, `slug`, `assignee` from `Issue` struct
-- Change ID generation to `{PREFIX}-{NNN}` format (auto-increment already implemented)
-- Remove config file handling
-
-### Phase 3: Storage Restructure
-
-- Move from flat `.dots/*.md` to `.dots/{prefix}/*.md`
-- Update `findIssuePath()` to search in prefix folders
-- Update archive handling to mirror scope structure
-
 ### Phase 4: Command Changes
 
-- Rename commands: `add`→`create`, `ls`→`list`, `on`→`start`, `off`→`close`
-- Update `create` to accept optional `-s <scope>`, auto-create scope
+- Rename commands: `add`→`open` (alias: `create`), `ls`→`list`, `on`→`start`, `off`→`close`
+- Update `open` to accept `-s <scope>`, auto-create scope
 - Update `show` to display blocking tree
-- Update `tree` to display scopes
+- Update `tree` to display all scopes
 - Remove `slugify`, `blocked` commands (already done)
+- Remove `fix` command (done)
 - Keep `update` command (decision: retain it)
+- Stop commands from silently accepting unknown flags. Don't fallback to `add` for unknown commands. Fail fast and fail loudly.
 
 ### Phase 5: Cleanup
 
-- Remove `-a` flag from `create` (use `dep add` instead)
+- Remove `-a` flag from `create` (done; use `dep add` instead)
 - Add `dep` command for managing dependencies
 - Update documentation
 

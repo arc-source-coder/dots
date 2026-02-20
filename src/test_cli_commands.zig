@@ -2,15 +2,11 @@ const std = @import("std");
 const fs = std.fs;
 const h = @import("test_helpers.zig");
 
-const storage_mod = h.storage_mod;
-const Status = h.Status;
 const Issue = h.Issue;
 const OhSnap = h.OhSnap;
-const fixed_timestamp = h.fixed_timestamp;
 const runDot = h.runDot;
 const isExitCode = h.isExitCode;
 const trimNewline = h.trimNewline;
-const normalizeTreeOutput = h.normalizeTreeOutput;
 const setupTestDirOrPanic = h.setupTestDirOrPanic;
 const openTestStorage = h.openTestStorage;
 
@@ -79,7 +75,7 @@ test "cli: add creates markdown file" {
     try std.testing.expect(id.len > 0);
 
     // Verify markdown file exists
-    const md_path = std.fmt.allocPrint(allocator, "{s}/.dots/{s}.md", .{ test_dir.path, id }) catch |err| {
+    const md_path = std.fmt.allocPrint(allocator, "{s}/.dots/test/{s}.md", .{ test_dir.path, id }) catch |err| {
         std.debug.panic("path: {}", .{err});
     };
     defer allocator.free(md_path);
@@ -154,7 +150,7 @@ test "cli: purge removes archived dots" {
     try std.testing.expectEqual(@as(usize, 0), count2);
 }
 
-test "cli: parent creates folder structure" {
+test "cli: add creates scope directory" {
     const allocator = std.testing.allocator;
 
     var test_dir = setupTestDirOrPanic(allocator);
@@ -165,32 +161,29 @@ test "cli: parent creates folder structure" {
     };
     defer init.deinit(allocator);
 
-    // Add parent
-    const parent = runDot(allocator, &.{ "add", "Parent task", "-s", "test" }, test_dir.path) catch |err| {
-        std.debug.panic("add parent: {}", .{err});
+    const add = runDot(allocator, &.{ "add", "Scoped task", "-s", "test" }, test_dir.path) catch |err| {
+        std.debug.panic("add scoped: {}", .{err});
     };
-    defer parent.deinit(allocator);
+    defer add.deinit(allocator);
+    const id = trimNewline(add.stdout);
 
-    const parent_id = trimNewline(parent.stdout);
-
-    // Add child
-    const child = runDot(allocator, &.{ "add", "Child task", "-P", parent_id, "-s", "test" }, test_dir.path) catch |err| {
-        std.debug.panic("add child: {}", .{err});
-    };
-    defer child.deinit(allocator);
-
-    // Verify folder structure
-    const folder_path = std.fmt.allocPrint(allocator, "{s}/.dots/{s}", .{ test_dir.path, parent_id }) catch |err| {
+    const scope_path = std.fmt.allocPrint(allocator, "{s}/.dots/test", .{test_dir.path}) catch |err| {
         std.debug.panic("path: {}", .{err});
     };
-    defer allocator.free(folder_path);
+    defer allocator.free(scope_path);
 
-    // Use openDir instead of statFile because statFile uses openFile on
-    // Windows which cannot open directories.
-    var parent_dir = fs.cwd().openDir(folder_path, .{}) catch |err| {
-        std.debug.panic("stat: {}", .{err});
+    var scope_dir = fs.cwd().openDir(scope_path, .{}) catch |err| {
+        std.debug.panic("open scope dir: {}", .{err});
     };
-    parent_dir.close();
+    scope_dir.close();
+
+    const file_path = std.fmt.allocPrint(allocator, "{s}/.dots/test/{s}.md", .{ test_dir.path, id }) catch |err| {
+        std.debug.panic("file path: {}", .{err});
+    };
+    defer allocator.free(file_path);
+    _ = fs.cwd().statFile(file_path) catch |err| {
+        std.debug.panic("stat scoped file: {}", .{err});
+    };
 }
 
 test "cli: find help" {
@@ -286,15 +279,12 @@ test "cli: find searches archive fields and orders results" {
         .description = "",
         .status = .open,
         .priority = 2,
-        .issue_type = "task",
-        .assignee = null,
         .created_at = "2024-03-01T00:00:00Z",
         .closed_at = null,
         .close_reason = null,
         .blocks = &.{},
-        .parent = null,
     };
-    try ts.storage.createIssue(open_issue, null);
+    try ts.storage.createIssue(open_issue);
 
     const closed_issue: Issue = .{
         .id = "closed-22222222",
@@ -302,15 +292,12 @@ test "cli: find searches archive fields and orders results" {
         .description = "",
         .status = .closed,
         .priority = 2,
-        .issue_type = "task",
-        .assignee = null,
         .created_at = "2024-01-01T00:00:00Z",
         .closed_at = "2024-02-01T00:00:00Z",
         .close_reason = "wontfix",
         .blocks = &.{},
-        .parent = null,
     };
-    try ts.storage.createIssue(closed_issue, null);
+    try ts.storage.createIssue(closed_issue);
     try ts.storage.archiveIssue("closed-22222222");
     ts.deinit();
 
@@ -396,16 +383,7 @@ test "cli: tree help" {
     const oh: OhSnap = .{};
     try oh.snap(@src(),
         \\[]u8
-        \\  "Usage: dot tree [id]
-        \\
-        \\Show dot hierarchy.
-        \\
-        \\Without arguments: shows all open root dots and their children.
-        \\With id: shows that specific dot's tree (including closed children).
-        \\
-        \\Examples:
-        \\  dot tree                    Show all open root dots
-        \\  dot tree my-project         Show specific dot and its children
+        \\  "dot tree is temporarily unavailable during migration
         \\"
     ).expectEqual(help.stdout);
     try oh.snap(@src(),
@@ -414,181 +392,18 @@ test "cli: tree help" {
     ).expectEqual(help.stderr);
 }
 
-test "cli: tree id shows specific root" {
+test "cli: fix token currently falls through to quick-add" {
     const allocator = std.testing.allocator;
 
     var test_dir = setupTestDirOrPanic(allocator);
     defer test_dir.cleanup();
 
-    const init = runDot(allocator, &.{"init"}, test_dir.path) catch |err| {
-        std.debug.panic("init: {}", .{err});
-    };
-    defer init.deinit(allocator);
-
-    const parent1 = runDot(allocator, &.{ "add", "Parent one", "-s", "test" }, test_dir.path) catch |err| {
-        std.debug.panic("add parent1: {}", .{err});
-    };
-    defer parent1.deinit(allocator);
-    const parent1_id = trimNewline(parent1.stdout);
-
-    const parent2 = runDot(allocator, &.{ "add", "Parent two", "-s", "test" }, test_dir.path) catch |err| {
-        std.debug.panic("add parent2: {}", .{err});
-    };
-    defer parent2.deinit(allocator);
-
-    const child = runDot(allocator, &.{ "add", "Child one", "-P", parent1_id, "-s", "test" }, test_dir.path) catch |err| {
-        std.debug.panic("add child: {}", .{err});
-    };
-    defer child.deinit(allocator);
-    const child_id = trimNewline(child.stdout);
-
-    const off = runDot(allocator, &.{ "off", child_id }, test_dir.path) catch |err| {
-        std.debug.panic("off child: {}", .{err});
-    };
-    defer off.deinit(allocator);
-
-    const tree = runDot(allocator, &.{ "tree", parent1_id }, test_dir.path) catch |err| {
-        std.debug.panic("tree: {}", .{err});
-    };
-    defer tree.deinit(allocator);
-
-    try std.testing.expect(isExitCode(tree.term, 0));
-
-    const normalized = try normalizeTreeOutput(allocator, tree.stdout);
-    defer allocator.free(normalized);
-
-    const oh: OhSnap = .{};
-    try oh.snap(@src(),
-        \\[]u8
-        \\  "[ID] ○ Parent one
-        \\  └─ [ID] ✓ Child one
-        \\"
-    ).expectEqual(normalized);
-}
-
-test "cli: tree ignores missing parent" {
-    const allocator = std.testing.allocator;
-
-    var test_dir = setupTestDirOrPanic(allocator);
-    defer test_dir.cleanup();
-
-    const init = runDot(allocator, &.{"init"}, test_dir.path) catch |err| {
-        std.debug.panic("init: {}", .{err});
-    };
-    defer init.deinit(allocator);
-
-    var dir = fs.openDirAbsolute(test_dir.path, .{}) catch |err| {
-        std.debug.panic("open dir: {}", .{err});
-    };
-    defer dir.close();
-
-    var dots_dir = dir.openDir(".dots", .{ .iterate = true }) catch |err| {
-        std.debug.panic("open .dots: {}", .{err});
-    };
-    defer dots_dir.close();
-
-    dots_dir.makeDir("orphan") catch |err| {
-        std.debug.panic("mkdir orphan: {}", .{err});
-    };
-
-    const orphan =
-        \\---
-        \\title: Orphan child
-        \\status: open
-        \\priority: 2
-        \\issue-type: task
-        \\created-at: 2024-01-01T00:00:00Z
-        \\---
-    ;
-    dots_dir.writeFile(.{ .sub_path = "orphan/orphan-child.md", .data = orphan }) catch |err| {
-        std.debug.panic("write orphan: {}", .{err});
-    };
-
-    const tree = runDot(allocator, &.{"tree"}, test_dir.path) catch |err| {
-        std.debug.panic("tree: {}", .{err});
-    };
-    defer tree.deinit(allocator);
-
-    try std.testing.expect(isExitCode(tree.term, 0));
-
-    const oh: OhSnap = .{};
-    try oh.snap(@src(),
-        \\[]u8
-        \\  "[orphan-child] ○ Orphan child
-        \\"
-    ).expectEqual(tree.stdout);
-    try oh.snap(@src(),
-        \\[]u8
-        \\  ""
-    ).expectEqual(tree.stderr);
-}
-
-test "cli: fix promotes orphan children" {
-    const allocator = std.testing.allocator;
-
-    var test_dir = setupTestDirOrPanic(allocator);
-    defer test_dir.cleanup();
-
-    const init = runDot(allocator, &.{"init"}, test_dir.path) catch |err| {
-        std.debug.panic("init: {}", .{err});
-    };
-    defer init.deinit(allocator);
-
-    var dir = fs.openDirAbsolute(test_dir.path, .{}) catch |err| {
-        std.debug.panic("open dir: {}", .{err});
-    };
-    defer dir.close();
-
-    var dots_dir = dir.openDir(".dots", .{ .iterate = true }) catch |err| {
-        std.debug.panic("open .dots: {}", .{err});
-    };
-    defer dots_dir.close();
-
-    dots_dir.makeDir("orphan") catch |err| {
-        std.debug.panic("mkdir orphan: {}", .{err});
-    };
-
-    const orphan =
-        \\---
-        \\title: Orphan child
-        \\status: open
-        \\priority: 2
-        \\issue-type: task
-        \\created-at: 2024-01-01T00:00:00Z
-        \\---
-    ;
-    dots_dir.writeFile(.{ .sub_path = "orphan/orphan-child.md", .data = orphan }) catch |err| {
-        std.debug.panic("write orphan: {}", .{err});
-    };
-
-    const fix = runDot(allocator, &.{"fix"}, test_dir.path) catch |err| {
+    const fix = runDot(allocator, &.{ "fix", "-s", "test" }, test_dir.path) catch |err| {
         std.debug.panic("fix: {}", .{err});
     };
     defer fix.deinit(allocator);
 
     try std.testing.expect(isExitCode(fix.term, 0));
-
-    const oh: OhSnap = .{};
-    try oh.snap(@src(),
-        \\[]u8
-        \\  "Fixed 1 orphan parent(s), moved 1 file(s)
-        \\"
-    ).expectEqual(fix.stdout);
-    try oh.snap(@src(),
-        \\[]u8
-        \\  ""
-    ).expectEqual(fix.stderr);
-
-    _ = dots_dir.statFile("orphan-child.md") catch |err| {
-        std.debug.panic("stat moved orphan: {}", .{err});
-    };
-
-    if (dots_dir.openDir("orphan", .{})) |orphan_dir| {
-        var od = orphan_dir;
-        od.close();
-        std.debug.panic("orphan dir still exists", .{});
-    } else |err| switch (err) {
-        error.FileNotFound => {},
-        else => std.debug.panic("open orphan dir: {}", .{err}),
-    }
+    try std.testing.expect(trimNewline(fix.stdout).len > 0);
+    try std.testing.expectEqual(@as(usize, 0), fix.stderr.len);
 }

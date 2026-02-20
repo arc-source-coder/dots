@@ -91,21 +91,6 @@ pub fn oracleListCount(statuses: [6]Status, filter: Status) usize {
     return count;
 }
 
-pub fn oracleChildBlocked(child_blocks: [3][3]bool, blocker_statuses: [3]Status) [3]bool {
-    var blocked = [_]bool{ false, false, false };
-    for (0..3) |i| {
-        var has_blocker = false;
-        for (0..3) |j| {
-            if (child_blocks[i][j] and isBlocking(blocker_statuses[j])) {
-                has_blocker = true;
-                break;
-            }
-        }
-        blocked[i] = has_blocker;
-    }
-    return blocked;
-}
-
 pub fn oracleUpdateClosed(done: bool) bool {
     return done;
 }
@@ -320,31 +305,6 @@ pub fn trimNewline(input: []const u8) []const u8 {
     return std.mem.trimRight(u8, input, "\n");
 }
 
-pub fn normalizeTreeOutput(allocator: std.mem.Allocator, output: []const u8) ![]u8 {
-    var normalized: std.ArrayList(u8) = .{};
-    errdefer normalized.deinit(allocator);
-
-    var lines = std.mem.splitScalar(u8, output, '\n');
-    while (lines.next()) |line| {
-        if (line.len == 0) continue;
-
-        if (std.mem.indexOf(u8, line, "[")) |start| {
-            if (std.mem.indexOfPos(u8, line, start, "]")) |end| {
-                try normalized.appendSlice(allocator, line[0..start]);
-                try normalized.appendSlice(allocator, "[ID]");
-                try normalized.appendSlice(allocator, line[end + 1 ..]);
-            } else {
-                try normalized.appendSlice(allocator, line);
-            }
-        } else {
-            try normalized.appendSlice(allocator, line);
-        }
-        try normalized.append(allocator, '\n');
-    }
-
-    return normalized.toOwnedSlice(allocator);
-}
-
 pub fn isExitCode(term: std.process.Child.Term, code: u8) bool {
     return switch (term) {
         .Exited => |actual| actual == code,
@@ -359,13 +319,10 @@ pub fn makeTestIssue(id: []const u8, status: Status) Issue {
         .description = "",
         .status = status,
         .priority = 2,
-        .issue_type = "task",
-        .assignee = null,
         .created_at = fixed_timestamp,
         .closed_at = if (status == .closed) fixed_timestamp else null,
         .close_reason = null,
         .blocks = &.{},
-        .parent = null,
     };
 }
 

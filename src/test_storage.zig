@@ -20,23 +20,23 @@ test "storage: dependency cycle rejected" {
     defer ts.deinit();
 
     // Create two issues
-    const issue_a = makeTestIssue("test-a", .open);
-    ts.storage.createIssue(issue_a, null) catch |err| {
+    const issue_a = makeTestIssue("test-001", .open);
+    ts.storage.createIssue(issue_a) catch |err| {
         std.debug.panic("create A: {}", .{err});
     };
 
-    const issue_b = makeTestIssue("test-b", .open);
-    ts.storage.createIssue(issue_b, null) catch |err| {
+    const issue_b = makeTestIssue("test-002", .open);
+    ts.storage.createIssue(issue_b) catch |err| {
         std.debug.panic("create B: {}", .{err});
     };
 
     // Add A depends on B (A->B)
-    ts.storage.addDependency("test-a", "test-b", "blocks") catch |err| {
+    ts.storage.addDependency("test-001", "test-002", "blocks") catch |err| {
         std.debug.panic("add A->B: {}", .{err});
     };
 
     // Try to add B depends on A (B->A) - should fail with DependencyCycle
-    const cycle_result = ts.storage.addDependency("test-b", "test-a", "blocks");
+    const cycle_result = ts.storage.addDependency("test-002", "test-001", "blocks");
     try std.testing.expectError(error.DependencyCycle, cycle_result);
 }
 
@@ -51,19 +51,19 @@ test "storage: delete cascade unblocks dependents" {
     defer ts.deinit();
 
     // Create blocker issue
-    const blocker = makeTestIssue("blocker", .open);
-    ts.storage.createIssue(blocker, null) catch |err| {
+    const blocker = makeTestIssue("blocker-001", .open);
+    ts.storage.createIssue(blocker) catch |err| {
         std.debug.panic("create blocker: {}", .{err});
     };
 
     // Create dependent issue
-    const dependent = makeTestIssue("dependent", .open);
-    ts.storage.createIssue(dependent, null) catch |err| {
+    const dependent = makeTestIssue("dependent-002", .open);
+    ts.storage.createIssue(dependent) catch |err| {
         std.debug.panic("create dependent: {}", .{err});
     };
 
     // Add dependency: dependent blocked by blocker
-    ts.storage.addDependency("dependent", "blocker", "blocks") catch |err| {
+    ts.storage.addDependency("dependent-002", "blocker-001", "blocks") catch |err| {
         std.debug.panic("add dep: {}", .{err});
     };
 
@@ -75,7 +75,7 @@ test "storage: delete cascade unblocks dependents" {
     try std.testing.expectEqual(@as(usize, 1), ready1.len); // Only blocker is ready
 
     // Delete blocker
-    ts.storage.deleteIssue("blocker") catch |err| {
+    ts.storage.deleteIssue("blocker-001") catch |err| {
         std.debug.panic("delete: {}", .{err});
     };
 
@@ -85,10 +85,10 @@ test "storage: delete cascade unblocks dependents" {
     };
     defer storage_mod.freeIssues(allocator, ready2);
     try std.testing.expectEqual(@as(usize, 1), ready2.len);
-    try std.testing.expectEqualStrings("dependent", ready2[0].id);
+    try std.testing.expectEqualStrings("dependent-002", ready2[0].id);
 }
 
-test "storage: delete parent cleans up child dependency refs" {
+test "storage: delete cleans up dependency refs" {
     const allocator = std.testing.allocator;
 
     var test_dir = setupTestDirOrPanic(allocator);
@@ -97,38 +97,33 @@ test "storage: delete parent cleans up child dependency refs" {
     var ts = openTestStorage(allocator, &test_dir);
     defer ts.deinit();
 
-    // Create parent with child
-    const parent = makeTestIssue("parent", .open);
-    try ts.storage.createIssue(parent, null);
+    // Create blocker + external dependent
+    const blocker = makeTestIssue("test-020", .open);
+    try ts.storage.createIssue(blocker);
 
-    const child = makeTestIssue("child", .open);
-    try ts.storage.createIssue(child, "parent");
-
-    // Create external issue that depends on the child
-    const external = makeTestIssue("external", .open);
-    try ts.storage.createIssue(external, null);
-    try ts.storage.addDependency("external", "child", "blocks");
+    const external = makeTestIssue("test-021", .open);
+    try ts.storage.createIssue(external);
+    try ts.storage.addDependency("test-021", "test-020", "blocks");
 
     // Verify external is blocked
     const ready1 = try ts.storage.getReadyIssues();
     defer storage_mod.freeIssues(allocator, ready1);
     var external_ready = false;
     for (ready1) |r| {
-        if (std.mem.eql(u8, r.id, "external")) external_ready = true;
+        if (std.mem.eql(u8, r.id, "test-021")) external_ready = true;
     }
     try std.testing.expect(!external_ready);
 
-    // Delete parent (which deletes child too)
-    try ts.storage.deleteIssue("parent");
+    try ts.storage.deleteIssue("test-020");
 
     // Verify external is now unblocked (child ref was cleaned up)
     const ready2 = try ts.storage.getReadyIssues();
     defer storage_mod.freeIssues(allocator, ready2);
     try std.testing.expectEqual(@as(usize, 1), ready2.len);
-    try std.testing.expectEqualStrings("external", ready2[0].id);
+    try std.testing.expectEqualStrings("test-021", ready2[0].id);
 
     // Verify external's blocks array is now empty
-    var ext = try ts.storage.getIssue("external") orelse return error.TestUnexpectedResult;
+    var ext = try ts.storage.getIssue("test-021") orelse return error.TestUnexpectedResult;
     defer ext.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 0), ext.blocks.len);
 }
@@ -144,30 +139,27 @@ test "storage: ID prefix resolution" {
 
     // Create an issue with a known ID
     const issue: Issue = .{
-        .id = "abc123def456",
+        .id = "abc-123",
         .title = "Test",
         .description = "",
         .status = .open,
         .priority = 2,
-        .issue_type = "task",
-        .assignee = null,
         .created_at = fixed_timestamp,
         .closed_at = null,
         .close_reason = null,
         .blocks = &.{},
-        .parent = null,
     };
-    ts.storage.createIssue(issue, null) catch |err| {
+    ts.storage.createIssue(issue) catch |err| {
         std.debug.panic("create: {}", .{err});
     };
 
     // Resolve by prefix
-    const resolved = ts.storage.resolveId("abc123") catch |err| {
+    const resolved = ts.storage.resolveId("abc") catch |err| {
         std.debug.panic("resolve: {}", .{err});
     };
     defer allocator.free(resolved);
 
-    try std.testing.expectEqualStrings("abc123def456", resolved);
+    try std.testing.expectEqualStrings("abc-123", resolved);
 }
 
 test "storage: ambiguous ID prefix errors" {
@@ -181,47 +173,41 @@ test "storage: ambiguous ID prefix errors" {
 
     // Create two issues with same prefix
     const issue1: Issue = .{
-        .id = "abc123111111",
+        .id = "abc-111",
         .title = "Test1",
         .description = "",
         .status = .open,
         .priority = 2,
-        .issue_type = "task",
-        .assignee = null,
         .created_at = fixed_timestamp,
         .closed_at = null,
         .close_reason = null,
         .blocks = &.{},
-        .parent = null,
     };
-    ts.storage.createIssue(issue1, null) catch |err| {
+    ts.storage.createIssue(issue1) catch |err| {
         std.debug.panic("create1: {}", .{err});
     };
 
     const issue2: Issue = .{
-        .id = "abc123222222",
+        .id = "abc-222",
         .title = "Test2",
         .description = "",
         .status = .open,
         .priority = 2,
-        .issue_type = "task",
-        .assignee = null,
         .created_at = fixed_timestamp,
         .closed_at = null,
         .close_reason = null,
         .blocks = &.{},
-        .parent = null,
     };
-    ts.storage.createIssue(issue2, null) catch |err| {
+    ts.storage.createIssue(issue2) catch |err| {
         std.debug.panic("create2: {}", .{err});
     };
 
     // Resolve with ambiguous prefix should error
-    const result = ts.storage.resolveId("abc123");
+    const result = ts.storage.resolveId("abc-");
     try std.testing.expectError(error.AmbiguousId, result);
 }
 
-test "storage: resolve ignores parent folders without issue file" {
+test "storage: resolve active ignores archived match" {
     const allocator = std.testing.allocator;
 
     var test_dir = setupTestDirOrPanic(allocator);
@@ -230,27 +216,22 @@ test "storage: resolve ignores parent folders without issue file" {
     var ts = openTestStorage(allocator, &test_dir);
     defer ts.deinit();
 
-    const parent = makeTestIssue("parent-aaa", .open);
-    ts.storage.createIssue(parent, null) catch |err| {
-        std.debug.panic("create parent: {}", .{err});
+    const active = makeTestIssue("test-031", .open);
+    ts.storage.createIssue(active) catch |err| {
+        std.debug.panic("create active: {}", .{err});
     };
-
-    const child = makeTestIssue("child-bbb", .open);
-    ts.storage.createIssue(child, "parent-aaa") catch |err| {
-        std.debug.panic("create child: {}", .{err});
+    const archived = makeTestIssue("test-032", .closed);
+    ts.storage.createIssue(archived) catch |err| {
+        std.debug.panic("create archived: {}", .{err});
     };
+    try ts.storage.archiveIssue("test-032");
 
-    const grandchild = makeTestIssue("grandchild-ccc", .open);
-    ts.storage.createIssue(grandchild, "child-bbb") catch |err| {
-        std.debug.panic("create grandchild: {}", .{err});
-    };
-
-    const resolved = ts.storage.resolveIdActive("child-bbb") catch |err| {
+    const resolved = ts.storage.resolveIdActive("test-03") catch |err| {
         std.debug.panic("resolve: {}", .{err});
     };
     defer allocator.free(resolved);
 
-    try std.testing.expectEqualStrings("child-bbb", resolved);
+    try std.testing.expectEqualStrings("test-031", resolved);
 }
 
 test "storage: missing required frontmatter fields rejected" {
@@ -262,6 +243,8 @@ test "storage: missing required frontmatter fields rejected" {
     var ts = openTestStorage(allocator, &test_dir);
     defer ts.deinit();
 
+    try ts.storage.dots_dir.makeDir("bad");
+
     // Write file with missing title
     const no_title =
         \\---
@@ -271,10 +254,10 @@ test "storage: missing required frontmatter fields rejected" {
         \\created-at: 2024-01-01T00:00:00Z
         \\---
     ;
-    try ts.storage.dots_dir.writeFile(.{ .sub_path = "no-title.md", .data = no_title });
+    try ts.storage.dots_dir.writeFile(.{ .sub_path = "bad/bad-001.md", .data = no_title });
 
     // Should fail to read
-    const result1 = ts.storage.getIssue("no-title");
+    const result1 = ts.storage.getIssue("bad-001");
     try std.testing.expectError(error.InvalidFrontmatter, result1);
 
     // Write file with missing created-at
@@ -286,10 +269,10 @@ test "storage: missing required frontmatter fields rejected" {
         \\issue-type: task
         \\---
     ;
-    try ts.storage.dots_dir.writeFile(.{ .sub_path = "no-created.md", .data = no_created });
+    try ts.storage.dots_dir.writeFile(.{ .sub_path = "bad/bad-002.md", .data = no_created });
 
     // Should fail to read
-    const result2 = ts.storage.getIssue("no-created");
+    const result2 = ts.storage.getIssue("bad-002");
     try std.testing.expectError(error.InvalidFrontmatter, result2);
 }
 
@@ -302,6 +285,8 @@ test "storage: parses CRLF frontmatter" {
     var ts = openTestStorage(allocator, &test_dir);
     defer ts.deinit();
 
+    try ts.storage.dots_dir.makeDir("crlf");
+
     const crlf_frontmatter =
         "---\r\n" ++
         "title: Windows newline test\r\n" ++
@@ -311,9 +296,9 @@ test "storage: parses CRLF frontmatter" {
         "created-at: 2024-01-01T00:00:00Z\r\n" ++
         "---\r\n" ++
         "Body from Windows\r\n";
-    try ts.storage.dots_dir.writeFile(.{ .sub_path = "crlf.md", .data = crlf_frontmatter });
+    try ts.storage.dots_dir.writeFile(.{ .sub_path = "crlf/crlf-001.md", .data = crlf_frontmatter });
 
-    var issue = (try ts.storage.getIssue("crlf")) orelse return error.TestUnexpectedResult;
+    var issue = (try ts.storage.getIssue("crlf-001")) orelse return error.TestUnexpectedResult;
     defer issue.deinit(allocator);
 
     try std.testing.expectEqualStrings("Windows newline test", issue.title);
@@ -329,6 +314,8 @@ test "storage: invalid block id rejected" {
     var ts = openTestStorage(allocator, &test_dir);
     defer ts.deinit();
 
+    try ts.storage.dots_dir.makeDir("bad");
+
     const bad_blocks =
         \\---
         \\title: Bad blocks
@@ -340,8 +327,8 @@ test "storage: invalid block id rejected" {
         \\  - ../nope
         \\---
     ;
-    try ts.storage.dots_dir.writeFile(.{ .sub_path = "bad-blocks.md", .data = bad_blocks });
+    try ts.storage.dots_dir.writeFile(.{ .sub_path = "bad/bad-003.md", .data = bad_blocks });
 
-    const result = ts.storage.getIssue("bad-blocks");
+    const result = ts.storage.getIssue("bad-003");
     try std.testing.expectError(error.InvalidFrontmatter, result);
 }
