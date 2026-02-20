@@ -1008,20 +1008,18 @@ pub const Storage = struct {
             try self.ensureParentFolder(pid);
             break :blk std.fmt.bufPrint(&path_buf, "{s}/{s}.md", .{ pid, issue.id }) catch return StorageError.IoError;
         } else blk: {
-            // Check if a folder with this ID exists (child created before parent)
-            const stat = self.dots_dir.statFile(issue.id) catch |err| switch (err) {
-                error.FileNotFound => {
-                    const fmt_result = std.fmt.bufPrint(&path_buf, "{s}.md", .{issue.id});
-                    break :blk fmt_result catch return StorageError.IoError;
-                },
-                else => return err,
-            };
-            if (stat.kind == .directory) {
+            // Check if a folder with this ID exists (child created before parent).
+            // Use openDir instead of statFile because statFile uses openFile on
+            // Windows which cannot open directories.
+            if (self.dots_dir.openDir(issue.id, .{})) |dir| {
+                var d = dir;
+                d.close();
                 // Folder exists - write to {id}/{id}.md
                 const fmt_result = std.fmt.bufPrint(&path_buf, "{s}/{s}.md", .{ issue.id, issue.id });
                 break :blk fmt_result catch return StorageError.IoError;
+            } else |_| {
+                break :blk std.fmt.bufPrint(&path_buf, "{s}.md", .{issue.id}) catch return StorageError.IoError;
             }
-            break :blk std.fmt.bufPrint(&path_buf, "{s}.md", .{issue.id}) catch return StorageError.IoError;
         };
 
         try writeFileAtomic(self.dots_dir, path, content);

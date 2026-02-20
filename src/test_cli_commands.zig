@@ -49,10 +49,12 @@ test "cli: init creates dots directory" {
     };
     defer allocator.free(dots_path);
 
-    const stat = fs.cwd().statFile(dots_path) catch |err| {
+    // Use openDir instead of statFile because statFile uses openFile on
+    // Windows which cannot open directories.
+    var dots_dir = fs.cwd().openDir(dots_path, .{}) catch |err| {
         std.debug.panic("stat: {}", .{err});
     };
-    try std.testing.expect(stat.kind == .directory);
+    dots_dir.close();
 }
 
 test "cli: add creates markdown file" {
@@ -183,10 +185,12 @@ test "cli: parent creates folder structure" {
     };
     defer allocator.free(folder_path);
 
-    const stat = fs.cwd().statFile(folder_path) catch |err| {
+    // Use openDir instead of statFile because statFile uses openFile on
+    // Windows which cannot open directories.
+    var parent_dir = fs.cwd().openDir(folder_path, .{}) catch |err| {
         std.debug.panic("stat: {}", .{err});
     };
-    try std.testing.expect(stat.kind == .directory);
+    parent_dir.close();
 }
 
 test "cli: find help" {

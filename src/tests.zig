@@ -9,8 +9,7 @@
 
 test {
     _ = @import("test_storage.zig");
-    // Commented out until we fix the bugs it has on Windows
-    // _ = @import("test_cli_commands.zig");
+    _ = @import("test_cli_commands.zig");
     _ = @import("test_property.zig");
     _ = @import("test_snapshots.zig");
 }
