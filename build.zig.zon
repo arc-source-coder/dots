@@ -7,7 +7,6 @@
             .hash = "ohsnap-0.4.2-iWxzyiGcAAAbUPJG3B6agP55LfeqGbtTOQ4PcgSGUb9-",
         },
         .zcheck = .{ .path = "deps/zcheck" },
-        .zeit = .{ .path = "deps/zeit" },
     },
     .paths = .{""},
     .fingerprint = 0x54d4af2155671ed5,

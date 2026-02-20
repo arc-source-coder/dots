@@ -18,12 +18,6 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    const zeit = b.dependency("zeit", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    exe.root_module.addImport("zeit", zeit.module("zeit"));
-
     const options = b.addOptions();
     options.addOption([]const u8, "version", version);
     options.addOption([]const u8, "git_hash", git_hash);

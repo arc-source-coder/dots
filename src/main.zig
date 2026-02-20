@@ -4,8 +4,6 @@ const Allocator = std.mem.Allocator;
 const storage_mod = @import("storage.zig");
 const build_options = @import("build_options");
 
-const zeit = @import("zeit");
-
 const Storage = storage_mod.Storage;
 const Issue = storage_mod.Issue;
 const Status = storage_mod.Status;
@@ -274,7 +272,7 @@ fn cmdAdd(allocator: Allocator, args: []const []const u8) !void {
     defer allocator.free(id);
 
     var ts_buf: [40]u8 = undefined;
-    const now = try formatTimestamp(allocator, &ts_buf);
+    const now = try formatTimestamp(&ts_buf);
 
     const issue: Issue = .{
         .id = id,
@@ -370,7 +368,7 @@ fn cmdOff(allocator: Allocator, args: []const []const u8) !void {
     defer storage_mod.freeResolveResults(allocator, results);
 
     var ts_buf: [40]u8 = undefined;
-    const now = try formatTimestamp(allocator, &ts_buf);
+    const now = try formatTimestamp(&ts_buf);
 
     for (results, 0..) |result, idx| {
         switch (result) {
@@ -485,7 +483,7 @@ fn cmdUpdate(allocator: Allocator, args: []const []const u8) !void {
     defer allocator.free(resolved);
 
     var ts_buf: [40]u8 = undefined;
-    const closed_at: ?[]const u8 = if (status == .closed) try formatTimestamp(allocator, &ts_buf) else null;
+    const closed_at: ?[]const u8 = if (status == .closed) try formatTimestamp(&ts_buf) else null;
 
     try storage.updateStatus(resolved, status, closed_at, null);
 }
@@ -506,7 +504,7 @@ fn cmdClose(allocator: Allocator, args: []const []const u8) !void {
     defer allocator.free(resolved);
 
     var ts_buf: [40]u8 = undefined;
-    const now = try formatTimestamp(allocator, &ts_buf);
+    const now = try formatTimestamp(&ts_buf);
 
     try storage.updateStatus(resolved, .closed, now, reason);
 }
@@ -519,13 +517,20 @@ fn cmdPurge(allocator: Allocator, _: []const []const u8) !void {
     try stdout().writeAll("Archive purged\n");
 }
 
-fn formatTimestamp(allocator: Allocator, buf: []u8) ![]const u8 {
-    var env = try std.process.getEnvMap(allocator);
-    defer env.deinit();
+fn formatTimestamp(buf: []u8) ![]const u8 {
+    const ts: u64 = @intCast(std.time.timestamp());
+    const epoch_seconds: std.time.epoch.EpochSeconds = .{ .secs = ts };
 
-    const local_tz = try zeit.local(allocator, &env);
-    defer local_tz.deinit();
+    const year_day = epoch_seconds.getEpochDay().calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
+    const day_seconds = epoch_seconds.getDaySeconds();
 
-    const now = try zeit.instant(.{ .timezone = &local_tz });
-    return now.time().bufPrint(buf, .rfc3339);
+    return std.fmt.bufPrint(buf, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}Z", .{
+        year_day.year,
+        month_day.month.numeric(),
+        month_day.day_index + 1,
+        day_seconds.getHoursIntoDay(),
+        day_seconds.getMinutesIntoHour(),
+        day_seconds.getSecondsIntoMinute(),
+    });
 }
