@@ -159,7 +159,7 @@ pub const Issue = struct {
     created_at: []const u8,
     closed_at: ?[]const u8,
     close_reason: ?[]const u8,
-    blocks: []const []const u8,  // IDs this issue is blocked by
+    blockers: []const []const u8,  // IDs this issue is blocked by
 };
 ```
 
@@ -179,7 +179,7 @@ title: Fix login bug
 status: open
 priority: 1
 created-at: 2024-12-24T10:30:00Z
-blocks:
+blockers:
   - app-002
 ---
 

@@ -1,50 +1,14 @@
 const std = @import("std");
-const fs = std.fs;
-const Allocator = std.mem.Allocator;
-const storage_mod = @import("storage.zig");
-const build_options = @import("build_options");
-
-const Storage = storage_mod.Storage;
-const Issue = storage_mod.Issue;
-const Status = storage_mod.Status;
-
-const dots_dir = storage_mod.dots_dir;
-const default_priority: i64 = 2;
-const min_priority: i64 = 0;
-const max_priority: i64 = 9;
-
-// Command dispatch table
-const Handler = *const fn (Allocator, []const []const u8) anyerror!void;
-const Command = struct { names: []const []const u8, handler: Handler };
-
-const commands = [_]Command{
-    .{ .names = &.{ "add", "create" }, .handler = cmdAdd },
-    .{ .names = &.{ "ls", "list" }, .handler = cmdList },
-    .{ .names = &.{ "on", "it" }, .handler = cmdOn },
-    .{ .names = &.{ "off", "done" }, .handler = cmdOff },
-    .{ .names = &.{ "rm", "delete" }, .handler = cmdRm },
-    .{ .names = &.{"show"}, .handler = cmdShow },
-    .{ .names = &.{"ready"}, .handler = cmdReady },
-    .{ .names = &.{"tree"}, .handler = cmdTree },
-    .{ .names = &.{"find"}, .handler = cmdFind },
-    .{ .names = &.{"update"}, .handler = cmdUpdate },
-    .{ .names = &.{"close"}, .handler = cmdClose },
-    .{ .names = &.{"purge"}, .handler = cmdPurge },
-    .{ .names = &.{"init"}, .handler = cmdInit },
-    .{ .names = &.{ "help", "--help", "-h" }, .handler = cmdHelp },
-    .{ .names = &.{ "--version", "-v" }, .handler = cmdVersion },
-};
-
-fn findCommand(name: []const u8) ?Handler {
-    inline for (commands) |cmd| {
-        inline for (cmd.names) |n| {
-            if (std.mem.eql(u8, name, n)) return cmd.handler;
-        }
-    }
-    return null;
-}
+const builtin = @import("builtin");
+const commands = @import("Commands.zig");
 
 pub fn main() void {
+    // Enable UTF-8 output on Windows consoles (default codepage is CP437,
+    // which garbles box-drawing characters like ├─ and symbols like ○).
+    if (comptime builtin.os.tag == .windows) {
+        _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
+    }
+
     if (run()) |_| {} else |err| handleError(err);
 }
 
@@ -54,483 +18,42 @@ fn run() !void {
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
 
-    if (args.len < 2) {
-        try cmdReady(allocator, &.{});
-    } else {
-        const cmd = args[1];
-        if (findCommand(cmd)) |handler| {
-            try handler(allocator, args[2..]);
-        } else if (std.mem.eql(u8, cmd, "hook")) {
-            fatal("Unknown command: hook\n", .{});
-        } else {
-            // Quick add: dot "title"
-            try cmdAdd(allocator, args[1..]);
-        }
-    }
-
-    if (stdout_writer) |*writer| {
-        try writer.interface.flush();
-    }
-    if (stderr_writer) |*writer| {
-        try writer.interface.flush();
-    }
-}
-
-fn cmdHelp(_: Allocator, _: []const []const u8) !void {
-    return stdout().writeAll(usage);
-}
-
-fn cmdVersion(_: Allocator, _: []const []const u8) !void {
-    return stdout().print("dots {s} ({s})\n", .{ build_options.version, build_options.git_hash });
-}
-
-fn openStorage(allocator: Allocator) !Storage {
-    return Storage.open(allocator);
-}
-
-// I/O helpers
-var stdout_buffer: [4096]u8 = undefined;
-var stdout_writer: ?fs.File.Writer = null;
-var stderr_buffer: [4096]u8 = undefined;
-var stderr_writer: ?fs.File.Writer = null;
-
-fn stdout() *std.Io.Writer {
-    if (stdout_writer == null) {
-        stdout_writer = fs.File.stdout().writer(&stdout_buffer);
-    }
-    return &stdout_writer.?.interface;
-}
-
-fn stderr() *std.Io.Writer {
-    if (stderr_writer == null) {
-        stderr_writer = fs.File.stderr().writer(&stderr_buffer);
-    }
-    return &stderr_writer.?.interface;
-}
-
-fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
-    const w = stderr();
-    w.print(fmt, args) catch unreachable;
-    w.flush() catch unreachable;
-    std.process.exit(1);
+    try commands.dispatch(allocator, args);
 }
 
 fn handleError(err: anyerror) noreturn {
-    switch (err) {
-        error.OutOfMemory => fatal("Out of memory\n", .{}),
-        error.FileNotFound => fatal("Missing issue file or directory in .dots\n", .{}),
-        error.AccessDenied => fatal("Permission denied\n", .{}),
-        error.NotDir => fatal("Expected a directory but found a file\n", .{}),
-        error.InvalidFrontmatter => fatal("Invalid issue frontmatter\n", .{}),
-        error.InvalidStatus => fatal("Invalid issue status\n", .{}),
-        error.InvalidId => fatal("Invalid issue id\n", .{}),
-        error.DependencyNotFound => fatal("Dependency not found\n", .{}),
-        error.DependencyCycle => fatal("Dependency would create a cycle\n", .{}),
-        error.IssueAlreadyExists => fatal("Issue already exists\n", .{}),
-        error.IssueNotFound => fatal("Issue not found\n", .{}),
-        error.AmbiguousId => fatal("Ambiguous issue id\n", .{}),
-        error.InvalidTimestamp => fatal("Invalid system time\n", .{}),
-        error.TimestampOverflow => fatal("System time out of range\n", .{}),
-        error.LocaltimeFailed => fatal("Failed to read local time\n", .{}),
-        error.IoError => fatal("I/O error\n", .{}),
-        else => fatal("Unexpected internal error (code: {s})\n", .{@errorName(err)}),
-    }
-}
+    var buf: [4096]u8 = undefined;
+    var writer = std.fs.File.stderr().writer(&buf);
 
-// ID resolution helper - resolves short ID or exits with error
-fn resolveIdOrFatal(storage: *storage_mod.Storage, id: []const u8) []const u8 {
-    return storage.resolveId(id) catch |err| switch (err) {
-        error.IssueNotFound => fatal("Issue not found: {s}\n", .{id}),
-        error.AmbiguousId => fatal("Ambiguous ID: {s}\n", .{id}),
-        else => fatal("Error resolving ID: {s}\n", .{id}),
-    };
-}
-
-fn resolveIdActiveOrFatal(storage: *storage_mod.Storage, id: []const u8) []const u8 {
-    return storage.resolveIdActive(id) catch |err| switch (err) {
-        error.IssueNotFound => fatal("Issue not found: {s}\n", .{id}),
-        error.AmbiguousId => fatal("Ambiguous ID: {s}\n", .{id}),
-        else => fatal("Error resolving ID: {s}\n", .{id}),
-    };
-}
-
-// Status parsing helper
-fn parseStatusArg(status_str: []const u8) Status {
-    return Status.parse(status_str) orelse fatal("Invalid status: {s}\n", .{status_str});
-}
-
-// Arg parsing helper
-fn getArg(args: []const []const u8, i: *usize, flag: []const u8) ?[]const u8 {
-    if (std.mem.eql(u8, args[i.*], flag) and i.* + 1 < args.len) {
-        i.* += 1;
-        return args[i.*];
-    }
-    return null;
-}
-
-fn hasFlag(args: []const []const u8, flag: []const u8) bool {
-    for (args) |arg| {
-        if (std.mem.eql(u8, arg, flag)) return true;
-    }
-    return false;
-}
-
-const usage =
-    \\dots - Connect the dots
-    \\
-    \\Usage: dot [command] [options]
-    \\
-    \\Commands:
-    \\  dot "title" -s <scope>           Quick add a dot
-    \\  dot add "title" -s <scope>       Add a dot (-p priority, -d desc)
-    \\  dot ls [--status S]              List dots
-    \\  dot on <id>                      Start working (turn it on!)
-    \\  dot off <id> [-r reason]         Complete ("cross it off")
-    \\  dot rm <id>                      Remove a dot
-    \\  dot show <id>                    Show dot details
-    \\  dot ready                        Show unblocked dots
-    \\  dot tree [id]                    Show hierarchy
-    \\  dot find "query"                 Search all dots
-    \\  dot purge                        Delete archived dots
-    \\  dot init                         Initialize .dots directory
-    \\
-    \\Scope: -s <scope> or DOTS_DEFAULT_SCOPE env var
-    \\
-    \\Examples:
-    \\  dot "Fix the bug" -s app
-    \\  dot add "Design API" -p 1 -d "REST endpoints" -s app
-    \\  dot on app-003
-    \\  dot off app-003 -r "shipped"
-    \\
-;
-
-fn gitAddDots(allocator: Allocator) !void {
-    // Add .dots to git if in a git repo
-    fs.cwd().access(".git", .{}) catch |err| switch (err) {
-        error.FileNotFound => return,
-        else => return err,
-    };
-
-    // Run git add .dots
-    var child = std.process.Child.init(&.{ "git", "add", dots_dir }, allocator);
-    const term = try child.spawnAndWait();
-    switch (term) {
-        .Exited => |code| {
-            if (code != 0) {
-                try stderr().print("Warning: git add failed with exit code {d}\n", .{code});
-            }
+    const msg: []const u8 = switch (err) {
+        error.OutOfMemory => "Out of memory\n",
+        error.FileNotFound => "Missing issue file or directory in .dots\n",
+        error.AccessDenied => "Permission denied\n",
+        error.NotDir => "Expected a directory but found a file\n",
+        error.InvalidFrontmatter => "Invalid issue frontmatter\n",
+        error.InvalidStatus => "Invalid issue status\n",
+        error.InvalidId => "Invalid issue id\n",
+        error.DependencyNotFound => "Dependency not found\n",
+        error.DependencyCycle => "Dependency would create a cycle\n",
+        error.IssueAlreadyExists => "Issue already exists\n",
+        error.IssueNotFound => "Issue not found\n",
+        error.AmbiguousId => "Ambiguous issue id\n",
+        error.InvalidTimestamp => "Invalid system time\n",
+        error.TimestampOverflow => "System time out of range\n",
+        error.LocaltimeFailed => "Failed to read local time\n",
+        error.IoError => "I/O error\n",
+        else => {
+            // ziglint-ignore: Z026 - Best effort cleanup
+            writer.interface.print("Unexpected internal error (code: {s})\n", .{@errorName(err)}) catch {};
+            // ziglint-ignore: Z026 - Best effort cleanup
+            writer.interface.flush() catch {};
+            std.process.exit(1);
         },
-        .Signal => |sig| try stderr().print("Warning: git add killed by signal {d}\n", .{sig}),
-        else => try stderr().writeAll("Warning: git add terminated abnormally\n"),
-    }
-}
-
-fn cmdInit(allocator: Allocator, _: []const []const u8) !void {
-    var storage = try openStorage(allocator);
-    defer storage.close();
-    try gitAddDots(allocator);
-}
-
-fn cmdAdd(allocator: Allocator, args: []const []const u8) !void {
-    if (args.len == 0) fatal("Usage: dot add <title> [options]\n", .{});
-
-    var title: []const u8 = "";
-    var description: []const u8 = "";
-    var priority: i64 = default_priority;
-    var scope: ?[]const u8 = null;
-
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        if (getArg(args, &i, "-p")) |v| {
-            const p = std.fmt.parseInt(i64, v, 10) catch fatal("Invalid priority: {s}\n", .{v});
-            priority = std.math.clamp(p, min_priority, max_priority);
-        } else if (getArg(args, &i, "-d")) |v| {
-            description = v;
-        } else if (getArg(args, &i, "-s")) |v| {
-            scope = v;
-        } else if (title.len == 0 and args[i].len > 0 and args[i][0] != '-') {
-            title = args[i];
-        }
-    }
-
-    if (title.len == 0) fatal("Error: title required\n", .{});
-
-    // Resolve scope: -s flag > DOTS_DEFAULT_SCOPE env var > error
-    const resolved_scope = scope orelse blk: {
-        var env = try std.process.getEnvMap(allocator);
-        defer env.deinit();
-        if (env.get("DOTS_DEFAULT_SCOPE")) |s| {
-            break :blk s;
-        }
-        fatal("Error: scope required (-s <scope> or DOTS_DEFAULT_SCOPE)\n", .{});
     };
 
-    var storage = try openStorage(allocator);
-    defer storage.close();
-
-    const id = try storage_mod.nextId(allocator, storage.dots_dir, resolved_scope);
-    defer allocator.free(id);
-
-    var ts_buf: [40]u8 = undefined;
-    const now = try formatTimestamp(&ts_buf);
-
-    const issue: Issue = .{
-        .id = id,
-        .title = title,
-        .description = description,
-        .status = .open,
-        .priority = priority,
-        .created_at = now,
-        .closed_at = null,
-        .close_reason = null,
-        .blocks = &.{},
-    };
-
-    try storage.createIssue(issue);
-
-    try stdout().print("{s}\n", .{id});
-}
-
-fn cmdList(allocator: Allocator, args: []const []const u8) !void {
-    var filter_status: ?Status = null;
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        if (getArg(args, &i, "--status")) |v| filter_status = parseStatusArg(v);
-    }
-
-    var storage = try openStorage(allocator);
-    defer storage.close();
-
-    const issues = try storage.listIssues(filter_status);
-    defer storage_mod.freeIssues(allocator, issues);
-
-    try writeIssueList(issues, filter_status == null);
-}
-
-fn cmdReady(allocator: Allocator, _: []const []const u8) !void {
-    var storage = try openStorage(allocator);
-    defer storage.close();
-
-    const issues = try storage.getReadyIssues();
-    defer storage_mod.freeIssues(allocator, issues);
-
-    try writeIssueList(issues, false);
-}
-
-fn writeIssueList(issues: []const Issue, skip_done: bool) !void {
-    const w = stdout();
-    for (issues) |issue| {
-        if (skip_done and issue.status == .closed) continue;
-        try w.print("[{s}] {c} {s}\n", .{ issue.id, issue.status.char(), issue.title });
-    }
-}
-
-fn cmdOn(allocator: Allocator, args: []const []const u8) !void {
-    if (args.len == 0) fatal("Usage: dot on <id> [id2 ...]\n", .{});
-
-    var storage = try openStorage(allocator);
-    defer storage.close();
-
-    const results = try storage.resolveIds(args);
-    defer storage_mod.freeResolveResults(allocator, results);
-
-    for (results, 0..) |result, i| {
-        switch (result) {
-            .ok => |id| try storage.updateStatus(id, .active, null, null),
-            .not_found => fatal("Issue not found: {s}\n", .{args[i]}),
-            .ambiguous => fatal("Ambiguous ID: {s}\n", .{args[i]}),
-        }
-    }
-}
-
-fn cmdOff(allocator: Allocator, args: []const []const u8) !void {
-    if (args.len == 0) fatal("Usage: dot off <id> [id2 ...] [-r reason]\n", .{});
-
-    var reason: ?[]const u8 = null;
-    var ids: std.ArrayList([]const u8) = .{};
-    defer ids.deinit(allocator);
-
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        if (getArg(args, &i, "-r")) |v| {
-            reason = v;
-        } else {
-            try ids.append(allocator, args[i]);
-        }
-    }
-
-    if (ids.items.len == 0) fatal("Usage: dot off <id> [id2 ...] [-r reason]\n", .{});
-
-    var storage = try openStorage(allocator);
-    defer storage.close();
-
-    const results = try storage.resolveIds(ids.items);
-    defer storage_mod.freeResolveResults(allocator, results);
-
-    var ts_buf: [40]u8 = undefined;
-    const now = try formatTimestamp(&ts_buf);
-
-    for (results, 0..) |result, idx| {
-        switch (result) {
-            .ok => |id| try storage.updateStatus(id, .closed, now, reason),
-            .not_found => fatal("Issue not found: {s}\n", .{ids.items[idx]}),
-            .ambiguous => fatal("Ambiguous ID: {s}\n", .{ids.items[idx]}),
-        }
-    }
-}
-
-fn cmdRm(allocator: Allocator, args: []const []const u8) !void {
-    if (args.len == 0) fatal("Usage: dot rm <id> [id2 ...]\n", .{});
-
-    var storage = try openStorage(allocator);
-    defer storage.close();
-
-    const results = try storage.resolveIds(args);
-    defer storage_mod.freeResolveResults(allocator, results);
-
-    for (results, 0..) |result, i| {
-        switch (result) {
-            .ok => |id| try storage.deleteIssue(id),
-            .not_found => fatal("Issue not found: {s}\n", .{args[i]}),
-            .ambiguous => fatal("Ambiguous ID: {s}\n", .{args[i]}),
-        }
-    }
-}
-
-fn cmdShow(allocator: Allocator, args: []const []const u8) !void {
-    if (args.len == 0) fatal("Usage: dot show <id>\n", .{});
-
-    var storage = try openStorage(allocator);
-    defer storage.close();
-
-    const resolved = resolveIdOrFatal(&storage, args[0]);
-    defer allocator.free(resolved);
-
-    var iss = try storage.getIssue(resolved) orelse fatal("Issue not found: {s}\n", .{args[0]});
-    defer iss.deinit(allocator);
-
-    const w = stdout();
-    try w.print("ID:       {s}\nTitle:    {s}\nStatus:   {s}\nPriority: {d}\n", .{
-        iss.id,
-        iss.title,
-        iss.status.display(),
-        iss.priority,
-    });
-    if (iss.description.len > 0) try w.print("Desc:     {s}\n", .{iss.description});
-    try w.print("Created:  {s}\n", .{iss.created_at});
-    if (iss.closed_at) |ca| try w.print("Closed:   {s}\n", .{ca});
-    if (iss.close_reason) |r| try w.print("Reason:   {s}\n", .{r});
-}
-
-fn cmdTree(allocator: Allocator, args: []const []const u8) !void {
-    _ = allocator;
-    _ = args;
-    try stdout().writeAll("dot tree is temporarily unavailable during migration\n");
-}
-
-fn cmdFind(allocator: Allocator, args: []const []const u8) !void {
-    if (args.len == 0 or hasFlag(args, "--help") or hasFlag(args, "-h")) {
-        const w = stdout();
-        try w.writeAll(
-            \\Usage: dot find <query>
-            \\
-            \\Search all dots (open first, then archived).
-            \\
-            \\Searches: title, description, close-reason, created-at, closed-at
-            \\
-            \\Examples:
-            \\  dot find "auth"      Search for dots mentioning auth
-            \\  dot find "2026-01"   Find dots from January 2026
-            \\
-        );
-        return;
-    }
-
-    var storage = try openStorage(allocator);
-    defer storage.close();
-
-    const issues = try storage.searchIssues(args[0]);
-    defer storage_mod.freeIssues(allocator, issues);
-
-    const w = stdout();
-    for (issues) |issue| {
-        if (issue.status != .closed) {
-            try w.print("[{s}] {c} {s}\n", .{ issue.id, issue.status.char(), issue.title });
-        }
-    }
-    for (issues) |issue| {
-        if (issue.status == .closed) {
-            try w.print("[{s}] {c} {s}\n", .{ issue.id, issue.status.char(), issue.title });
-        }
-    }
-}
-
-fn cmdUpdate(allocator: Allocator, args: []const []const u8) !void {
-    if (args.len == 0) fatal("Usage: dot update <id> [--status S]\n", .{});
-
-    var new_status: ?Status = null;
-    var i: usize = 1;
-    while (i < args.len) : (i += 1) {
-        if (getArg(args, &i, "--status")) |v| new_status = parseStatusArg(v);
-    }
-
-    const status = new_status orelse fatal("--status required\n", .{});
-
-    var storage = try openStorage(allocator);
-    defer storage.close();
-
-    const resolved = resolveIdOrFatal(&storage, args[0]);
-    defer allocator.free(resolved);
-
-    var ts_buf: [40]u8 = undefined;
-    const closed_at: ?[]const u8 = if (status == .closed) try formatTimestamp(&ts_buf) else null;
-
-    try storage.updateStatus(resolved, status, closed_at, null);
-}
-
-fn cmdClose(allocator: Allocator, args: []const []const u8) !void {
-    if (args.len == 0) fatal("Usage: dot close <id> [--reason R]\n", .{});
-
-    var reason: ?[]const u8 = null;
-    var i: usize = 1;
-    while (i < args.len) : (i += 1) {
-        if (getArg(args, &i, "--reason")) |v| reason = v;
-    }
-
-    var storage = try openStorage(allocator);
-    defer storage.close();
-
-    const resolved = resolveIdOrFatal(&storage, args[0]);
-    defer allocator.free(resolved);
-
-    var ts_buf: [40]u8 = undefined;
-    const now = try formatTimestamp(&ts_buf);
-
-    try storage.updateStatus(resolved, .closed, now, reason);
-}
-
-fn cmdPurge(allocator: Allocator, _: []const []const u8) !void {
-    var storage = try openStorage(allocator);
-    defer storage.close();
-
-    try storage.purgeArchive();
-    try stdout().writeAll("Archive purged\n");
-}
-
-fn formatTimestamp(buf: []u8) ![]const u8 {
-    const ts: u64 = @intCast(std.time.timestamp());
-    const epoch_seconds: std.time.epoch.EpochSeconds = .{ .secs = ts };
-
-    const year_day = epoch_seconds.getEpochDay().calculateYearDay();
-    const month_day = year_day.calculateMonthDay();
-    const day_seconds = epoch_seconds.getDaySeconds();
-
-    return std.fmt.bufPrint(buf, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}Z", .{
-        year_day.year,
-        month_day.month.numeric(),
-        month_day.day_index + 1,
-        day_seconds.getHoursIntoDay(),
-        day_seconds.getMinutesIntoHour(),
-        day_seconds.getSecondsIntoMinute(),
-    });
+    // ziglint-ignore: Z026 - Best effort cleanup
+    writer.interface.writeAll(msg) catch {};
+    // ziglint-ignore: Z026 - Best effort cleanup
+    writer.interface.flush() catch {};
+    std.process.exit(1);
 }

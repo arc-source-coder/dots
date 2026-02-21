@@ -43,7 +43,7 @@ Status as of 2026-02-20.
 - Removed `fix` command from CLI dispatch and deleted `cmdFix`
 - Removed `-P` and `-a` flags from `dot add`
 - Updated `cmdAdd` to call `createIssue(issue)` (no parent argument)
-- Stubbed `cmdTree` during hierarchy removal to keep compilation stable
+- Stubbed `cmdTree` during hierarchy removal to keep compilation stable (now re-enabled)
 - Updated help/usage text to remove parent/fix references
 
 ## LOC Reduction
@@ -59,40 +59,39 @@ Status as of 2026-02-20.
 ## Known Issues
 
 - Unrecognized commands/flags can still fall through silently to quick-add parsing. This is tracked as follow-up work.
-- `tree` is intentionally stubbed during migration; tests currently only assert command viability, not final tree semantics.
 
-## Tree Command Bring-Back Notes
+## Tree Command ✅
 
-- Re-enable `cmdTree` with scope-aware rendering over `.dots/{scope}/{id}.md`.
-- Define output contract:
-  - no-arg form shows scopes and issue rows
-  - optional filters/status behavior is explicit (and tested)
-  - stable ordering by scope name, then issue order (`priority`, `created_at`)
-- Add focused tests:
-  - scope aggregation counts
-  - mixed open/active/closed visibility rules
-  - archive exclusion/inclusion policy (explicit)
-  - snapshot for output shape on both Unix/Windows newline handling (snap: tree output format is currently stubbed - proper snapshot should be restored)
-- Remove temporary stub messaging and tighten CLI snapshots once behavior is finalized.
+Re-enabled `cmdTree` with scope-aware rendering over `.dots/{scope}/{id}.md`.
 
-## Remaining Phases
+- **Output contract**: no-arg form shows all scopes with issue rows; `dot tree <scope>` filters to a single scope (fails fast on unknown scope)
+- **Visibility**: only open/active issues shown in rows; closed/archived excluded entirely
+- **Ordering**: scopes sorted alphabetically, issues sorted by priority then `created_at`
+- **Color**: active issues highlighted with TTY-aware cyan (via `std.Io.tty.Config`)
+- **Storage**: added `listScopes()` method and `freeScopes()` helper
+- **Tests**: scope aggregation counts, scope filtering, unknown scope error, closed issue exclusion, empty scope display, active+open merged count, snapshot for exact output shape
 
-### Phase 4: Command Changes
+### Phase 4: Command Changes ✅
 
 - Rename commands: `add`→`open` (alias: `create`), `ls`→`list`, `on`→`start`, `off`→`close`
 - Update `open` to accept `-s <scope>`, auto-create scope
-- Update `show` to display blocking tree
-- Update `tree` to display all scopes
+- Update `show` to display blocking tree (both "Blocked by" and "Blocks" sections with tree connectors; focal ID highlighted in cyan)
+- Update `tree` to display all scopes (done)
+- Update `start` to warn on open blockers but proceed
 - Remove `slugify`, `blocked` commands (already done)
 - Remove `fix` command (done)
 - Keep `update` command (decision: retain it)
 - Stop commands from silently accepting unknown flags. Don't fallback to `add` for unknown commands. Fail fast and fail loudly.
 
-### Phase 5: Cleanup
+### Phase 5: Cleanup ✅
 
-- Remove `-a` flag from `create` (done; use `dep add` instead)
-- Add `dep` command for managing dependencies
-- Update documentation
+- Remove `-a` flag from `create` (done; use `block` instead)
+- Added `block <id> <blocker-id>` and `unblock <id> <blocker-id>` commands
+- Added `removeDependency` to storage
+- Updated README with new command reference
+- Tests: block, unblock, start warning, show dependency sections
+
+## Remaining Phases
 
 ### Phase 6: Codebase Reorganization
 

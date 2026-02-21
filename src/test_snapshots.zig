@@ -4,7 +4,6 @@ const h = @import("test_helpers.zig");
 
 const OhSnap = h.OhSnap;
 const runDot = h.runDot;
-const trimNewline = h.trimNewline;
 const setupTestDirOrPanic = h.setupTestDirOrPanic;
 
 test "snap: simple struct" {
@@ -41,16 +40,16 @@ test "snap: markdown frontmatter format" {
 
     // Add a task with specific parameters
     const add = runDot(allocator, &.{
-        "add", "Test snapshot task",
-        "-p",  "1",
-        "-d",  "This is a description",
-        "-s",  "test",
+        "open", "Test snapshot task",
+        "-p",   "1",
+        "-d",   "This is a description",
+        "-s",   "test",
     }, test_dir.path) catch |err| {
         std.debug.panic("add: {}", .{err});
     };
     defer add.deinit(allocator);
 
-    const id = trimNewline(add.stdout);
+    const id = std.mem.trimEnd(u8, add.stdout, "\n");
 
     // Read the markdown file
     const md_path = std.fmt.allocPrint(allocator, "{s}/.dots/test/{s}.md", .{ test_dir.path, id }) catch |err| {
@@ -106,13 +105,37 @@ test "snap: tree output format" {
     };
     defer init.deinit(allocator);
 
+    // Create issues across two scopes
+    const a1 = runDot(allocator, &.{ "open", "Fix login", "-s", "app", "-p", "1" }, test_dir.path) catch |err| {
+        std.debug.panic("open app-001: {}", .{err});
+    };
+    defer a1.deinit(allocator);
+
+    const a2 = runDot(allocator, &.{ "open", "Setup DB", "-s", "app", "-p", "2" }, test_dir.path) catch |err| {
+        std.debug.panic("open app-002: {}", .{err});
+    };
+    defer a2.deinit(allocator);
+
+    const d1 = runDot(allocator, &.{ "open", "API docs", "-s", "docs" }, test_dir.path) catch |err| {
+        std.debug.panic("open docs-001: {}", .{err});
+    };
+    defer d1.deinit(allocator);
+
     const tree = runDot(allocator, &.{"tree"}, test_dir.path) catch |err| {
         std.debug.panic("tree: {}", .{err});
     };
     defer tree.deinit(allocator);
 
-    // Temporary migration behavior: tree command is intentionally stubbed.
-    // Output can vary across the current Linux/Windows test binary setup,
-    // so only assert that command invocation succeeds without stderr.
     try std.testing.expect(tree.stderr.len == 0);
+
+    const oh: OhSnap = .{};
+    try oh.snap(@src(),
+        \\[]u8
+        \\  "app (2 open)
+        \\  ├─ app-001 ○ Fix login
+        \\  └─ app-002 ○ Setup DB
+        \\docs (1 open)
+        \\  └─ docs-001 ○ API docs
+        \\"
+    ).expectEqual(tree.stdout);
 }

@@ -91,20 +91,7 @@ pub fn oracleListCount(statuses: [6]Status, filter: Status) usize {
     return count;
 }
 
-pub fn oracleUpdateClosed(done: bool) bool {
-    return done;
-}
-
 pub fn runDot(allocator: std.mem.Allocator, args: []const []const u8, cwd: []const u8) !RunResult {
-    return runDotWithInput(allocator, args, cwd, null);
-}
-
-pub fn runDotWithInput(
-    allocator: std.mem.Allocator,
-    args: []const []const u8,
-    cwd: []const u8,
-    input: ?[]const u8,
-) !RunResult {
     var argv: std.ArrayList([]const u8) = .{};
     defer argv.deinit(allocator);
 
@@ -114,18 +101,13 @@ pub fn runDotWithInput(
     }
 
     var child = std.process.Child.init(argv.items, allocator);
+
     child.cwd = cwd;
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
-    child.stdin_behavior = if (input != null) .Pipe else .Ignore;
+    child.stdin_behavior = .Ignore;
 
     try child.spawn();
-
-    if (input) |data| {
-        try child.stdin.?.writeAll(data);
-        child.stdin.?.close();
-        child.stdin = null;
-    }
 
     const stdout = try child.stdout.?.readToEndAlloc(allocator, max_output_bytes);
     errdefer allocator.free(stdout);
@@ -301,10 +283,6 @@ pub fn openTestStorage(allocator: std.mem.Allocator, tmp: *const TestTmpDir) Tes
     };
 }
 
-pub fn trimNewline(input: []const u8) []const u8 {
-    return std.mem.trimRight(u8, input, "\n");
-}
-
 pub fn isExitCode(term: std.process.Child.Term, code: u8) bool {
     return switch (term) {
         .Exited => |actual| actual == code,
@@ -322,7 +300,7 @@ pub fn makeTestIssue(id: []const u8, status: Status) Issue {
         .created_at = fixed_timestamp,
         .closed_at = if (status == .closed) fixed_timestamp else null,
         .close_reason = null,
-        .blocks = &.{},
+        .blockers = &.{},
     };
 }
 

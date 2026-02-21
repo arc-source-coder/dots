@@ -120,7 +120,7 @@ pub const Issue = struct {
     created_at: []const u8,
     closed_at: ?[]const u8,
     close_reason: ?[]const u8,
-    blocks: []const []const u8,
+    blockers: []const []const u8,
 
     /// Compare issues by priority (ascending) then created_at (ascending)
     pub fn order(_: void, a: Issue, b: Issue) bool {
@@ -139,12 +139,12 @@ pub const Issue = struct {
             .created_at = self.created_at,
             .closed_at = closed_at,
             .close_reason = close_reason,
-            .blocks = self.blocks,
+            .blockers = self.blockers,
         };
     }
 
-    /// Create a copy with updated blocks (borrows all strings)
-    pub fn withBlocks(self: Issue, blocks: []const []const u8) Issue {
+    /// Create a copy with updated blockers (borrows all strings)
+    pub fn withBlockers(self: Issue, blockers: []const []const u8) Issue {
         return .{
             .id = self.id,
             .title = self.title,
@@ -154,7 +154,7 @@ pub const Issue = struct {
             .created_at = self.created_at,
             .closed_at = self.closed_at,
             .close_reason = self.close_reason,
-            .blocks = blocks,
+            .blockers = blockers,
         };
     }
 
@@ -178,14 +178,14 @@ pub const Issue = struct {
         const close_reason = if (self.close_reason) |r| try allocator.dupe(u8, r) else null;
         errdefer if (close_reason) |r| allocator.free(r);
 
-        var blocks: std.ArrayList([]const u8) = .{};
+        var blockers: std.ArrayList([]const u8) = .{};
         errdefer {
-            for (blocks.items) |b| allocator.free(b);
-            blocks.deinit(allocator);
+            for (blockers.items) |b| allocator.free(b);
+            blockers.deinit(allocator);
         }
-        for (self.blocks) |b| {
+        for (self.blockers) |b| {
             const duped = try allocator.dupe(u8, b);
-            try blocks.append(allocator, duped);
+            try blockers.append(allocator, duped);
         }
 
         return .{
@@ -197,7 +197,7 @@ pub const Issue = struct {
             .created_at = created_at,
             .closed_at = closed_at,
             .close_reason = close_reason,
-            .blocks = try blocks.toOwnedSlice(allocator),
+            .blockers = try blockers.toOwnedSlice(allocator),
         };
     }
 
@@ -208,8 +208,8 @@ pub const Issue = struct {
         allocator.free(self.created_at);
         if (self.closed_at) |s| allocator.free(s);
         if (self.close_reason) |s| allocator.free(s);
-        for (self.blocks) |b| allocator.free(b);
-        allocator.free(self.blocks);
+        for (self.blockers) |b| allocator.free(b);
+        allocator.free(self.blockers);
         self.* = undefined;
     }
 };
@@ -261,6 +261,11 @@ pub fn freeIssues(allocator: Allocator, issues: []Issue) void {
     allocator.free(issues);
 }
 
+pub fn freeScopes(allocator: Allocator, scopes: []const []const u8) void {
+    for (scopes) |s| allocator.free(s);
+    allocator.free(scopes);
+}
+
 // YAML Frontmatter parsing
 const Frontmatter = struct {
     title: []const u8 = "",
@@ -269,20 +274,20 @@ const Frontmatter = struct {
     created_at: []const u8 = "",
     closed_at: ?[]const u8 = null,
     close_reason: ?[]const u8 = null,
-    blocks: []const []const u8 = &.{},
+    blockers: []const []const u8 = &.{},
 };
 
 const ParseResult = struct {
     frontmatter: Frontmatter,
     description: []const u8,
     // Track allocated strings for cleanup
-    allocated_blocks: [][]const u8,
+    allocated_blockers: [][]const u8,
     allocated_title: ?[]const u8 = null,
 
     pub fn deinit(self: *ParseResult, allocator: Allocator) void {
         if (self.allocated_title) |t| allocator.free(t);
-        for (self.allocated_blocks) |b| allocator.free(b);
-        allocator.free(self.allocated_blocks);
+        for (self.allocated_blockers) |b| allocator.free(b);
+        allocator.free(self.allocated_blockers);
         self.* = undefined;
     }
 };
@@ -295,7 +300,7 @@ const FrontmatterField = enum {
     created_at,
     closed_at,
     close_reason,
-    blocks,
+    blockers,
 };
 
 const frontmatter_field_map = std.StaticStringMap(FrontmatterField).initComptime(.{
@@ -305,7 +310,7 @@ const frontmatter_field_map = std.StaticStringMap(FrontmatterField).initComptime
     .{ "created-at", .created_at },
     .{ "closed-at", .closed_at },
     .{ "close-reason", .close_reason },
-    .{ "blocks", .blocks },
+    .{ "blockers", .blockers },
 });
 
 /// Result of parsing a YAML value - clearly indicates ownership
@@ -327,6 +332,15 @@ const YamlValue = union(enum) {
         };
     }
 };
+
+/// Strip leading and trailing quotes from a YAML value
+/// Use only for values that never contain escape sequences (e.g. timestamps).
+fn stripYamlQuotes(value: []const u8) []const u8 {
+    if (value.len >= 2 and value[0] == '"' and value[value.len - 1] == '"') {
+        return value[1 .. value.len - 1];
+    }
+    return value;
+}
 
 /// Parse a YAML value, handling quoted strings with escape sequences
 fn parseYamlValue(allocator: Allocator, value: []const u8) !YamlValue {
@@ -392,31 +406,31 @@ fn parseFrontmatter(allocator: Allocator, content: []const u8) !ParseResult {
         "";
 
     var fm: Frontmatter = .{};
-    var blocks_list: std.ArrayList([]const u8) = .{};
+    var blockers_list: std.ArrayList([]const u8) = .{};
     var allocated_title: ?[]const u8 = null;
     errdefer {
         if (allocated_title) |t| allocator.free(t);
-        for (blocks_list.items) |b| allocator.free(b);
-        blocks_list.deinit(allocator);
+        for (blockers_list.items) |b| allocator.free(b);
+        blockers_list.deinit(allocator);
     }
 
-    var in_blocks = false;
+    var in_blockers = false;
     var lines = std.mem.splitScalar(u8, yaml_content, '\n');
 
     while (lines.next()) |line| {
         const trimmed = std.mem.trim(u8, line, "\r\t ");
 
-        // Handle blocks array items
-        if (in_blocks) {
+        // Handle blockers array items
+        if (in_blockers) {
             if (std.mem.startsWith(u8, trimmed, "- ")) {
                 const block_id = std.mem.trim(u8, trimmed[2..], " ");
                 // Validate block ID to prevent path traversal attacks
                 validateId(block_id) catch return StorageError.InvalidFrontmatter;
                 const duped = try allocator.dupe(u8, block_id);
-                try blocks_list.append(allocator, duped);
+                try blockers_list.append(allocator, duped);
                 continue;
             } else if (trimmed.len > 0 and !std.mem.startsWith(u8, trimmed, " ")) {
-                in_blocks = false;
+                in_blockers = false;
             } else {
                 continue;
             }
@@ -437,21 +451,21 @@ fn parseFrontmatter(allocator: Allocator, content: []const u8) !ParseResult {
             },
             .status => fm.status = Status.parse(value) orelse return StorageError.InvalidStatus,
             .priority => fm.priority = std.fmt.parseInt(i64, value, 10) catch return StorageError.InvalidFrontmatter,
-            .created_at => fm.created_at = value,
-            .closed_at => fm.closed_at = if (value.len > 0) value else null,
-            .close_reason => fm.close_reason = if (value.len > 0) value else null,
-            .blocks => in_blocks = true,
+            .created_at => fm.created_at = stripYamlQuotes(value),
+            .closed_at => fm.closed_at = if (value.len > 0) stripYamlQuotes(value) else null,
+            .close_reason => fm.close_reason = if (value.len > 0) stripYamlQuotes(value) else null,
+            .blockers => in_blockers = true,
         }
     }
 
-    const allocated_blocks = try blocks_list.toOwnedSlice(allocator);
-    fm.blocks = allocated_blocks;
+    const allocated_blockers = try blockers_list.toOwnedSlice(allocator);
+    fm.blockers = allocated_blockers;
 
     // Validate required fields
     if (fm.title.len == 0 or fm.created_at.len == 0) {
         // Clean up allocations on validation failure
-        for (allocated_blocks) |b| allocator.free(b);
-        allocator.free(allocated_blocks);
+        for (allocated_blockers) |b| allocator.free(b);
+        allocator.free(allocated_blockers);
         if (allocated_title) |t| {
             allocator.free(t);
             allocated_title = null; // Prevent errdefer double-free
@@ -462,7 +476,7 @@ fn parseFrontmatter(allocator: Allocator, content: []const u8) !ParseResult {
     return .{
         .frontmatter = fm,
         .description = description,
-        .allocated_blocks = allocated_blocks,
+        .allocated_blockers = allocated_blockers,
         .allocated_title = allocated_title,
     };
 }
@@ -528,9 +542,9 @@ fn serializeFrontmatter(allocator: Allocator, issue: Issue) ![]u8 {
         try writeYamlValue(allocator, &buf, reason);
     }
 
-    if (issue.blocks.len > 0) {
-        try buf.appendSlice(allocator, "\nblocks:");
-        for (issue.blocks) |block_id| {
+    if (issue.blockers.len > 0) {
+        try buf.appendSlice(allocator, "\nblockers:");
+        for (issue.blockers) |block_id| {
             try buf.appendSlice(allocator, "\n  - ");
             try buf.appendSlice(allocator, block_id);
         }
@@ -809,11 +823,11 @@ pub const Storage = struct {
         const parsed = try parseFrontmatter(self.allocator, content);
         // Free allocated_title after duping
         defer if (parsed.allocated_title) |t| self.allocator.free(t);
-        // Free allocated_blocks on error (transferred to Issue on success)
-        var blocks_transferred = false;
-        errdefer if (!blocks_transferred) {
-            for (parsed.allocated_blocks) |b| self.allocator.free(b);
-            self.allocator.free(parsed.allocated_blocks);
+        // Free allocated_blockers on error (transferred to Issue on success)
+        var blockers_transferred = false;
+        errdefer if (!blockers_transferred) {
+            for (parsed.allocated_blockers) |b| self.allocator.free(b);
+            self.allocator.free(parsed.allocated_blockers);
         };
 
         const issue_id = try self.allocator.dupe(u8, id);
@@ -834,8 +848,8 @@ pub const Storage = struct {
         const close_reason = if (parsed.frontmatter.close_reason) |r| try self.allocator.dupe(u8, r) else null;
         errdefer if (close_reason) |r| self.allocator.free(r);
 
-        // Mark blocks as transferred (will be owned by Issue)
-        blocks_transferred = true;
+        // Mark blockers as transferred (will be owned by Issue)
+        blockers_transferred = true;
         return .{
             .id = issue_id,
             .title = title,
@@ -845,14 +859,14 @@ pub const Storage = struct {
             .created_at = created_at,
             .closed_at = closed_at,
             .close_reason = close_reason,
-            .blocks = parsed.allocated_blocks,
+            .blockers = parsed.allocated_blockers,
         };
     }
 
     pub fn createIssue(self: *Storage, issue: Issue) !void {
         // Validate IDs to prevent path traversal
         try validateId(issue.id);
-        for (issue.blocks) |b| try validateId(b);
+        for (issue.blockers) |b| try validateId(b);
 
         // Prevent overwriting existing issues
         // Note: TOCTOU race exists here - concurrent creates may both pass this check.
@@ -949,7 +963,7 @@ pub const Storage = struct {
         try self.dots_dir.deleteFile(path);
     }
 
-    /// Remove all references to the given ID from other issues' blocks arrays
+    /// Remove all references to the given ID from other issues' blockers arrays
     /// Optimized: uses already-loaded issues instead of re-reading from disk
     fn removeDependencyReferences(self: *Storage, deleted_id: []const u8) !void {
         // Get all issues (including archived)
@@ -959,7 +973,7 @@ pub const Storage = struct {
         for (issues) |issue| {
             // Check if this issue references the deleted ID
             var has_reference = false;
-            for (issue.blocks) |b| {
+            for (issue.blockers) |b| {
                 if (std.mem.eql(u8, b, deleted_id)) {
                     has_reference = true;
                     break;
@@ -968,31 +982,31 @@ pub const Storage = struct {
 
             if (!has_reference) continue;
 
-            // Build new blocks without the removed dependency (using already-loaded issue)
-            var new_blocks: std.ArrayList([]const u8) = .{};
+            // Build new blockers without the removed dependency (using already-loaded issue)
+            var new_blockers: std.ArrayList([]const u8) = .{};
             errdefer {
-                for (new_blocks.items) |b| self.allocator.free(b);
-                new_blocks.deinit(self.allocator);
+                for (new_blockers.items) |b| self.allocator.free(b);
+                new_blockers.deinit(self.allocator);
             }
 
-            for (issue.blocks) |b| {
+            for (issue.blockers) |b| {
                 if (!std.mem.eql(u8, b, deleted_id)) {
                     const duped = try self.allocator.dupe(u8, b);
-                    try new_blocks.append(self.allocator, duped);
+                    try new_blockers.append(self.allocator, duped);
                 }
             }
 
-            const blocks_slice = try new_blocks.toOwnedSlice(self.allocator);
+            const blockers_slice = try new_blockers.toOwnedSlice(self.allocator);
             defer {
-                for (blocks_slice) |b| self.allocator.free(b);
-                self.allocator.free(blocks_slice);
+                for (blockers_slice) |b| self.allocator.free(b);
+                self.allocator.free(blockers_slice);
             }
 
             // Find path and write directly (no re-read needed)
             const path = try self.findIssuePath(issue.id);
             defer self.allocator.free(path);
 
-            const content = try serializeFrontmatter(self.allocator, issue.withBlocks(blocks_slice));
+            const content = try serializeFrontmatter(self.allocator, issue.withBlockers(blockers_slice));
             defer self.allocator.free(content);
 
             try writeFileAtomic(self.dots_dir, path, content);
@@ -1035,6 +1049,32 @@ pub const Storage = struct {
         std.mem.sort(Issue, issues.items, {}, Issue.order);
 
         return issues.toOwnedSlice(self.allocator);
+    }
+
+    /// List scope directory names (subdirs of .dots/, excluding "archive").
+    /// Returns alphabetically sorted owned slice.
+    pub fn listScopes(self: *Storage) ![]const []const u8 {
+        var scopes: std.ArrayList([]const u8) = .{};
+        errdefer {
+            for (scopes.items) |s| self.allocator.free(s);
+            scopes.deinit(self.allocator);
+        }
+
+        var iter = self.dots_dir.iterate();
+        while (try iter.next()) |entry| {
+            if (entry.kind == .directory and !std.mem.eql(u8, entry.name, "archive")) {
+                const name = try self.allocator.dupe(u8, entry.name);
+                try scopes.append(self.allocator, name);
+            }
+        }
+
+        std.mem.sort([]const u8, scopes.items, {}, struct {
+            fn lessThan(_: void, a: []const u8, b: []const u8) bool {
+                return std.mem.order(u8, a, b) == .lt;
+            }
+        }.lessThan);
+
+        return scopes.toOwnedSlice(self.allocator);
     }
 
     fn collectIssuesFromDir(
@@ -1129,7 +1169,7 @@ pub const Storage = struct {
 
         for (all_issues, 0..) |issue, i| {
             if (issue.status != .open) continue;
-            if (isBlockedByStatusMap(issue.blocks, &status_by_id)) continue;
+            if (isBlockedByStatusMap(issue.blockers, &status_by_id)) continue;
 
             keep[i] = true;
             ready.appendAssumeCapacity(issue);
@@ -1142,8 +1182,8 @@ pub const Storage = struct {
         return ready.toOwnedSlice(self.allocator);
     }
 
-    fn isBlockedByStatusMap(blocks: []const []const u8, status_by_id: *const StatusMap) bool {
-        for (blocks) |blocker_id| {
+    fn isBlockedByStatusMap(blockers: []const []const u8, status_by_id: *const StatusMap) bool {
+        for (blockers) |blocker_id| {
             const status = status_by_id.get(blocker_id) orelse continue;
             if (status == .open or status == .active) return true;
         }
@@ -1201,6 +1241,45 @@ pub const Storage = struct {
         return true;
     }
 
+    pub fn removeDependency(self: *Storage, issue_id: []const u8, depends_on_id: []const u8) !void {
+        try validateId(issue_id);
+        try validateId(depends_on_id);
+
+        const path = try self.findIssuePath(issue_id);
+        defer self.allocator.free(path);
+
+        var issue = try self.readIssueFromPath(path, issue_id);
+        defer issue.deinit(self.allocator);
+
+        var new_blockers: std.ArrayList([]const u8) = .{};
+        errdefer {
+            for (new_blockers.items) |b| self.allocator.free(b);
+            new_blockers.deinit(self.allocator);
+        }
+
+        var found = false;
+        for (issue.blockers) |b| {
+            if (std.mem.eql(u8, b, depends_on_id)) {
+                found = true;
+                continue;
+            }
+            try new_blockers.append(self.allocator, try self.allocator.dupe(u8, b));
+        }
+
+        if (!found) return StorageError.DependencyNotFound;
+
+        const blockers_slice = try new_blockers.toOwnedSlice(self.allocator);
+        defer {
+            for (blockers_slice) |b| self.allocator.free(b);
+            self.allocator.free(blockers_slice);
+        }
+
+        const content = try serializeFrontmatter(self.allocator, issue.withBlockers(blockers_slice));
+        defer self.allocator.free(content);
+
+        try writeFileAtomic(self.dots_dir, path, content);
+    }
+
     pub fn addDependency(self: *Storage, issue_id: []const u8, depends_on_id: []const u8, dep_type: []const u8) !void {
         // Validate IDs to prevent path traversal
         try validateId(issue_id);
@@ -1213,14 +1292,14 @@ pub const Storage = struct {
 
         // Validate dependency type
         const valid_dep_types = std.StaticStringMap(void).initComptime(.{
-            .{ "blocks", {} },
+            .{ "blockers", {} },
         });
         if (valid_dep_types.get(dep_type) == null) {
             return StorageError.InvalidFrontmatter;
         }
 
-        // For "blocks" type, add to the issue's blocks array
-        if (std.mem.eql(u8, dep_type, "blocks")) {
+        // For "blockers" type, add to the issue's blockers array
+        if (std.mem.eql(u8, dep_type, "blockers")) {
             // Check for cycle
             if (try self.wouldCreateCycle(issue_id, depends_on_id)) {
                 return StorageError.DependencyCycle;
@@ -1232,32 +1311,32 @@ pub const Storage = struct {
             var issue = try self.readIssueFromPath(path, issue_id);
             defer issue.deinit(self.allocator);
 
-            // Check if already in blocks
-            for (issue.blocks) |b| {
+            // Check if already in blockers
+            for (issue.blockers) |b| {
                 if (std.mem.eql(u8, b, depends_on_id)) return; // Already exists
             }
 
-            // Add to blocks array
-            var new_blocks: std.ArrayList([]const u8) = .{};
+            // Add to blockers array
+            var new_blockers: std.ArrayList([]const u8) = .{};
             errdefer {
-                for (new_blocks.items) |b| self.allocator.free(b);
-                new_blocks.deinit(self.allocator);
+                for (new_blockers.items) |b| self.allocator.free(b);
+                new_blockers.deinit(self.allocator);
             }
 
-            for (issue.blocks) |b| {
+            for (issue.blockers) |b| {
                 const duped = try self.allocator.dupe(u8, b);
-                try new_blocks.append(self.allocator, duped);
+                try new_blockers.append(self.allocator, duped);
             }
             const new_dep = try self.allocator.dupe(u8, depends_on_id);
-            try new_blocks.append(self.allocator, new_dep);
+            try new_blockers.append(self.allocator, new_dep);
 
-            const blocks_slice = try new_blocks.toOwnedSlice(self.allocator);
+            const blockers_slice = try new_blockers.toOwnedSlice(self.allocator);
             defer {
-                for (blocks_slice) |b| self.allocator.free(b);
-                self.allocator.free(blocks_slice);
+                for (blockers_slice) |b| self.allocator.free(b);
+                self.allocator.free(blockers_slice);
             }
 
-            const content = try serializeFrontmatter(self.allocator, issue.withBlocks(blocks_slice));
+            const content = try serializeFrontmatter(self.allocator, issue.withBlockers(blockers_slice));
             defer self.allocator.free(content);
 
             try writeFileAtomic(self.dots_dir, path, content);
@@ -1265,7 +1344,7 @@ pub const Storage = struct {
     }
 
     fn wouldCreateCycle(self: *Storage, from_id: []const u8, to_id: []const u8) !bool {
-        // BFS from to_id following blocks dependencies
+        // BFS from to_id following blockers dependencies
         // If we reach from_id, cycle would be created
 
         // Use arena for all BFS allocations - single free at end
@@ -1295,7 +1374,7 @@ pub const Storage = struct {
             var issue = try self.getIssue(current) orelse continue;
             defer issue.deinit(self.allocator);
 
-            for (issue.blocks) |blocker| {
+            for (issue.blockers) |blocker| {
                 if (!visited.contains(blocker)) {
                     // Must dupe since issue will be freed
                     try queue.append(alloc, try alloc.dupe(u8, blocker));

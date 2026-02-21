@@ -11,10 +11,8 @@ const fixed_timestamp = h.fixed_timestamp;
 const makeTestIssue = h.makeTestIssue;
 const runDot = h.runDot;
 const isExitCode = h.isExitCode;
-const trimNewline = h.trimNewline;
 const oracleReady = h.oracleReady;
 const oracleListCount = h.oracleListCount;
-const oracleUpdateClosed = h.oracleUpdateClosed;
 const setupTestDirOrPanic = h.setupTestDirOrPanic;
 const openTestStorage = h.openTestStorage;
 
@@ -51,7 +49,7 @@ test "prop: ready issues match oracle" {
             for (0..4) |i| {
                 for (0..4) |j| {
                     if (args.deps[i][j]) {
-                        ts.storage.addDependency(ids[i], ids[j], "blocks") catch |err| switch (err) {
+                        ts.storage.addDependency(ids[i], ids[j], "blockers") catch |err| switch (err) {
                             error.DependencyCycle => {}, // Skip cycles
                             else => std.debug.panic("add dependency: {}", .{err}),
                         };
@@ -154,12 +152,12 @@ test "prop: update done sets closed_at" {
             };
             defer init.deinit(allocator);
 
-            const add = runDot(allocator, &.{ "add", "Update done test", "-s", "test" }, test_dir.path) catch |err| {
+            const add = runDot(allocator, &.{ "open", "Update done test", "-s", "test" }, test_dir.path) catch |err| {
                 std.debug.panic("add: {}", .{err});
             };
             defer add.deinit(allocator);
 
-            const id = trimNewline(add.stdout);
+            const id = std.mem.trimEnd(u8, add.stdout, "\n");
             if (id.len == 0) return false;
 
             const status = if (args.done) "done" else "open";
@@ -175,7 +173,7 @@ test "prop: update done sets closed_at" {
             defer show.deinit(allocator);
             if (!isExitCode(show.term, 0)) return false;
 
-            const expects_closed = oracleUpdateClosed(args.done);
+            const expects_closed = args.done;
             if (expects_closed) {
                 if (std.mem.indexOf(u8, show.stdout, "Closed:") == null) return false;
                 if (std.mem.indexOf(u8, show.stdout, "Status:   done") == null) return false;
@@ -212,7 +210,7 @@ test "prop: unknown id errors" {
             }
             const id = id_buf[0..];
 
-            const on_result = runDot(allocator, &.{ "on", id }, test_dir.path) catch |err| {
+            const on_result = runDot(allocator, &.{ "start", id }, test_dir.path) catch |err| {
                 std.debug.panic("on: {}", .{err});
             };
             defer on_result.deinit(allocator);
@@ -280,7 +278,7 @@ test "prop: lifecycle simulation maintains invariants" {
                                 .created_at = fixed_timestamp,
                                 .closed_at = null,
                                 .close_reason = null,
-                                .blocks = &.{},
+                                .blockers = &.{},
                             };
                             ts.storage.createIssue(issue) catch continue;
                             oracle.create(idx, op_data.priority % 5, null);
@@ -312,7 +310,7 @@ test "prop: lifecycle simulation maintains invariants" {
                     },
                     .add_dep => {
                         if (oracle.exists[idx] and oracle.exists[secondary] and idx != secondary) {
-                            if (ts.storage.addDependency(ids[idx].?, ids[secondary].?, "blocks")) {
+                            if (ts.storage.addDependency(ids[idx].?, ids[secondary].?, "blockers")) {
                                 _ = oracle.addDep(idx, secondary);
                             } else |err| switch (err) {
                                 error.DependencyCycle => {},
@@ -395,14 +393,14 @@ test "prop: transitive blocking chains" {
                     .created_at = fixed_timestamp,
                     .closed_at = closed_at,
                     .close_reason = null,
-                    .blocks = &.{},
+                    .blockers = &.{},
                 };
                 ts.storage.createIssue(issue) catch return false;
             }
 
             // Create dependency chain: 0 depends on 1, 1 depends on 2, etc.
             for (0..chain_len - 1) |i| {
-                ts.storage.addDependency(ids[i], ids[i + 1], "blocks") catch return false;
+                ts.storage.addDependency(ids[i], ids[i + 1], "blockers") catch return false;
             }
 
             // Check if target is in ready list
@@ -494,7 +492,7 @@ test "prop: priority ordering in list" {
                     .created_at = fixed_timestamp,
                     .closed_at = null,
                     .close_reason = null,
-                    .blocks = &.{},
+                    .blockers = &.{},
                 };
                 ts.storage.createIssue(issue) catch return false;
             }
@@ -542,7 +540,7 @@ test "prop: status transition state machine" {
                 .created_at = fixed_timestamp,
                 .closed_at = null,
                 .close_reason = null,
-                .blocks = &.{},
+                .blockers = &.{},
             };
             ts.storage.createIssue(issue) catch return false;
 
@@ -626,7 +624,7 @@ test "prop: search finds exactly matching issues" {
                     .created_at = fixed_timestamp,
                     .closed_at = null,
                     .close_reason = null,
-                    .blocks = &.{},
+                    .blockers = &.{},
                 };
                 ts.storage.createIssue(issue) catch return false;
             }

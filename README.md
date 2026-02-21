@@ -6,16 +6,16 @@
 
 Minimal task tracker for AI coding agents.
 
-| | beads (SQLite) | dots (markdown) |
-|---|---:|---:|
-| Binary | 25 MB | **200 KB** (125x smaller) |
-| Lines of code | 115,000 | **2,800** (41x less) |
-| Dependencies | Go, SQLite/Wasm | None |
-| Portability | Rebuild per platform | Copy `.dots/` anywhere |
+|               |       beads (SQLite) |           dots (markdown) |
+| ------------- | -------------------: | ------------------------: |
+| Binary        |                25 MB | **200 KB** (125x smaller) |
+| Lines of code |              115,000 |      **2,800** (41x less) |
+| Dependencies  |      Go, SQLite/Wasm |                      None |
+| Portability   | Rebuild per platform |    Copy `.dots/` anywhere |
 
 ## What is dots?
 
-A CLI task tracker with **zero dependencies** — tasks are plain markdown files with YAML frontmatter in `.dots/`. No database, no server, no configuration. Copy the folder between machines, commit to git, edit with any tool. Parent-child relationships map to folders. Each task has an ID, title, status, priority, and optional dependencies.
+A CLI task tracker with **zero dependencies** — tasks are plain markdown files with YAML frontmatter in `.dots/`. No database, no server, no configuration. Copy the folder between machines, commit to git, edit with any tool. Each task has an ID, title, status, priority, and optional blocking dependencies.
 
 ## Contributing
 
@@ -52,21 +52,33 @@ dot --version
 dot init
 # Creates: .dots/ directory (added to git if in repo)
 
-# Add a task
-dot add "Fix the login bug"
-# Output: dots-a1b2c3d4e5f6a7b8
+# Open a task
+dot open "Fix the login bug" -s app
+# Output: app-001
 
 # List tasks
-dot ls
-# Output: [a1b2c3d] o Fix the login bug
+dot list
+# Output: [app-001] o Fix the login bug
 
 # Start working
-dot on a1b2c3d
-# Output: (none, task marked active)
+dot start app-001
 
 # Complete task
-dot off a1b2c3d -r "Fixed in commit abc123"
-# Output: (none, task marked done and archived)
+dot close app-001 -r "Fixed in commit abc123"
+```
+
+## Scopes
+
+Every task belongs to a **scope** — a short label like `app`, `docs`, or `tests`.
+
+```bash
+# Specify scope explicitly
+dot open "Design API" -s app        # → app-001
+dot open "Write docs" -s docs       # → docs-001
+
+# Or set a default scope
+export DOTS_DEFAULT_SCOPE=app
+dot open "Quick task"               # → app-002
 ```
 
 ## Command Reference
@@ -76,64 +88,77 @@ dot off a1b2c3d -r "Fixed in commit abc123"
 ```bash
 dot init
 ```
-Creates `.dots/` directory. Runs `git add .dots` if in a git repository. Safe to run if already exists.
 
-### Add Task
+Creates `.dots/` directory. Runs `git add .dots` if in a git repository. Safe to run if already initialized.
+
+### Open Task
 
 ```bash
-dot add "title" [-p PRIORITY] [-d "description"] [-P PARENT_ID] [-a AFTER_ID] [--json]
-dot "title"  # shorthand for: dot add "title"
+dot open "title" -s <scope> [-p PRIORITY] [-d "description"]
+dot create "title" -s <scope>  # alias
 ```
 
 Options:
-- `-p N`: Priority 0-4 (0 = highest, default 2)
-- `-d "text"`: Long description (markdown body of the file)
-- `-P ID`: Parent task ID (creates folder hierarchy)
-- `-a ID`: Blocked by task ID (dependency)
-- `--json`: Output created task as JSON
+
+- `-s <scope>`: Scope name (required if `DOTS_DEFAULT_SCOPE` is not set)
+- `-p N`: Priority 0–9 (0 = highest, default 2)
+- `-d "text"`: Description (markdown body of the file)
 
 Examples:
+
 ```bash
-dot add "Design API" -p 1
-# Output: dots-1a2b3c4d5e6f7890
+dot open "Design API" -p 1 -s app
+# Output: app-001
 
-dot add "Implement API" -a dots-1a2b3c4d -d "REST endpoints for user management"
-# Output: dots-3c4d5e6f7a8b9012
-
-dot add "Write tests" --json
-# Output: {"id":"dots-5e6f7a8b9012cdef","title":"Write tests","status":"open","priority":2,...}
+dot open "Implement API" -d "REST endpoints" -s app
+# Output: app-002
 ```
 
 ### List Tasks
 
 ```bash
-dot ls [--status STATUS] [--json]
+dot list [--status STATUS]
+dot ls   # alias
 ```
 
 Options:
-- `--status`: Filter by `open`, `active`, or `done` (default: shows open + active)
-- `--json`: Output as JSON array
 
-Output format (text):
+- `--status`: Filter by `open`, `active`, or `closed` (default: shows all non-closed)
+
+Output format:
+
 ```
-[1a2b3c4] o Design API        # o = open
-[3c4d5e6] > Implement API     # > = active
-[5e6f7a8] x Write tests       # x = done
+[app-001] o Design API       # o = open
+[app-002] > Implement API    # > = active
+[app-003] x Write tests      # x = closed
 ```
 
 ### Start Working
 
 ```bash
-dot on <id> [id2 ...]
+dot start <id> [id2 ...]
 ```
-Marks task(s) as `active`. Use when you begin working on tasks. Supports short ID prefixes.
 
-### Complete Task
+Marks task(s) as `active`. If a task is blocked by open issues, a warning is shown but the command proceeds.
 
 ```bash
-dot off <id> [id2 ...] [-r "reason"]
+$ dot start app-002
+Warning: app-002 is blocked by:
+  app-001 (open) - Design API
 ```
-Marks task(s) as `done` and archives them. Optional reason applies to all. Root tasks are moved to `.dots/archive/`. Child tasks wait for parent to close before moving.
+
+### Close Task
+
+```bash
+dot close <id|scope> [id2 ...] [-r "reason"]
+```
+
+Marks task(s) as `closed` and archives them. Pass a scope name to close all issues in that scope.
+
+```bash
+dot close app-001 -r "shipped"   # Close one task
+dot close -s app                 # Close all app-* tasks
+```
 
 ### Show Task Details
 
@@ -141,137 +166,138 @@ Marks task(s) as `done` and archives them. Optional reason applies to all. Root 
 dot show <id>
 ```
 
-Output:
+Shows issue details plus its full dependency context — what blocks it and what it blocks.
+
 ```
-ID:       dots-1a2b3c4d5e6f7890
-Title:    Design API
+ID:       app-002
+Title:    Implement API
 Status:   open
-Priority: 1
-Desc:     REST endpoints for user management
+Priority: 2
 Created:  2024-12-24T10:30:00Z
+
+Blocked by:
+  └─ app-001 (open) - Design API
+
+Blocks:
+  └─ app-003 (open) - Write tests
 ```
+
+### Show Dependency Tree
+
+```bash
+dot tree [scope]
+```
+
+Shows all scopes and their open/active issues. Pass a scope name to filter.
+
+```
+app (2 open)
+  ├─ app-001 ○ Design API
+  └─ app-002 ○ Implement API
+docs (1 open)
+  └─ docs-001 ○ API documentation
+```
+
+### Block / Unblock
+
+```bash
+dot block <id> <blocker-id>     # Mark id as blocked by blocker-id
+dot unblock <id> <blocker-id>   # Remove that blocking relationship
+```
+
+Blocking relationships are stored in the issue's frontmatter. A blocked task is excluded from `dot ready` until all its blockers are closed.
+
+```bash
+dot block app-002 app-001       # app-002 can't start until app-001 is done
+dot unblock app-002 app-001     # Remove that constraint
+```
+
+### Show Ready Tasks
+
+```bash
+dot ready
+```
+
+Lists tasks that are `open` and have no open blocking dependencies. Run with no arguments to see what to work on next.
 
 ### Remove Task
 
 ```bash
 dot rm <id> [id2 ...]
 ```
-Permanently deletes task file(s). If removing a parent, children are also deleted.
 
-### Show Ready Tasks
-
-```bash
-dot ready [--json]
-```
-Lists tasks that are `open` and have no blocking dependencies (or blocker is `done`).
-
-### Show Hierarchy
-
-```bash
-dot tree [id]
-```
-
-Without arguments: shows all open root dots and their children.
-With `id`: shows that specific dot's tree (including closed children).
-
-Output:
-```
-[1a2b3c4] o Build auth system
-  +- [2b3c4d5] o Design schema
-  +- [3c4d5e6] o Implement endpoints (blocked)
-  +- [4d5e6f7] o Write tests (blocked)
-```
-
-### Fix Orphans
-
-```bash
-dot fix
-```
-Promotes orphaned children to root and removes missing parent folders.
+Permanently deletes task file(s) and removes any references to them from other tasks' dependency lists.
 
 ### Search Tasks
 
 ```bash
 dot find "query"
 ```
-Case-insensitive search across title, description, close-reason, created-at, and closed-at. Shows open dots first, then archived.
+
+Case-insensitive search across title, description, close-reason, created-at, and closed-at. Shows open tasks first, then archived.
 
 ### Purge Archive
 
 ```bash
 dot purge
 ```
-Permanently deletes all archived (completed) tasks from `.dots/archive/`.
+
+Permanently deletes all archived (closed) tasks from `.dots/archive/`.
 
 ## Storage Format
 
-Tasks are stored as markdown files with YAML frontmatter in `.dots/`:
-
 ```
 .dots/
-  a1b2c3d4e5f6a7b8.md              # Root dot (no children)
-  f9e8d7c6b5a49382/                # Parent with children
-    f9e8d7c6b5a49382.md            # Parent dot file
-    1a2b3c4d5e6f7890.md            # Child dot
-  archive/                          # Closed dots
-    oldtask12345678.md             # Archived root dot
-    oldparent1234567/              # Archived tree
-      oldparent1234567.md
-      oldchild23456789.md
-  config                            # ID prefix setting
+  app/
+    app-001.md
+    app-002.md
+  docs/
+    docs-001.md
+  archive/
+    app/
+      app-003.md   # closed tasks
 ```
 
 ### File Format
 
 ```markdown
 ---
-title: Fix the bug
+title: Implement API
 status: open
 priority: 2
-issue-type: task
-assignee: joel
 created-at: 2024-12-24T10:30:00Z
-blocks:
-  - a3f2b1c8d9e04a7b
+blockers:
+  - app-001
 ---
 
-Description as markdown body here.
+REST endpoints for user management.
 ```
 
 ### ID Format
 
-IDs have the format `{prefix}-{slug}-{hex}` where:
-- `prefix`: Project prefix from `.dots/config` (default: `dots`)
-- `slug`: URL-safe abbreviation of the title (max 32 chars)
-- `hex`: 8-character random hex suffix
+IDs have the format `{scope}-{NNN}`:
 
-Example: `dots-fix-user-auth-a3f2b1c8`
+- `scope`: Short label for the work area (`app`, `docs`, `tests`, …)
+- `NNN`: Auto-incrementing 3-digit number (4 digits after 999)
 
-The slug uses common abbreviations (authentication→auth, configuration→config, etc.) and truncates at word boundaries. Run `dot slugify` to rename existing IDs to include slugs.
+Examples: `app-001`, `docs-064`, `tests-135`
 
 Commands accept short prefixes:
 
 ```bash
-dot on a3f2b1    # Matches dots-fix-user-auth-a3f2b1c8
-dot show a3f     # Error if ambiguous (multiple matches)
+dot start app-0    # Matches app-001 if unambiguous
+dot show app       # Error: ambiguous (matches all app-*)
 ```
-
-### Slugify
-
-```bash
-dot slugify
-```
-Renames all issue IDs (including archived) to include slugs based on their titles. Preserves the hex suffix and updates all dependency references.
 
 ### Status Flow
 
 ```
-open -> active -> done (archived)
+open → active → closed (archived)
 ```
 
 - `open`: Task created, not started
 - `active`: Currently being worked on
-- `done`: Completed, moved to archive
+- `closed`: Completed, moved to `.dots/archive/`
 
 ### Priority Scale
 
@@ -279,46 +305,22 @@ open -> active -> done (archived)
 - `1`: High
 - `2`: Normal (default)
 - `3`: Low
-- `4`: Backlog
-
-### Dependencies
-
-- `parent (-P)`: Creates folder hierarchy. Parent folder contains child files.
-- `blocks (-a)`: Stored in frontmatter. Task blocked until all blockers are `done`.
-
-### Archive Behavior
-
-When a task is marked done:
-- **Root tasks**: Immediately moved to `.dots/archive/`
-- **Child tasks**: Stay in parent folder until parent is closed
-- **Parent tasks**: Only archive when ALL children are closed (moves entire folder)
+- `4+`: Backlog
 
 ## Agent Integration
 
 dots is a pure CLI tool. For Claude Code and Codex integration (session management, auto-continuation, context clearing), use [banjo](https://github.com/joelreymont/banjo).
 
-## Migrating from beads
-
-If you have existing tasks in `.beads/beads.db`, use the migration script:
-
-```bash
-./migrate-dots.sh
-```
-
-This exports your tasks from SQLite and imports them as markdown files. The script verifies the migration was successful before prompting you to delete the old `.beads/` directory.
-
-Requirements: `sqlite3` and `jq` must be installed.
-
 ## Why dots?
 
-| Feature | Description |
-|---------|-------------|
-| Markdown files | Human-readable, git-friendly storage |
-| YAML frontmatter | Structured metadata with flexible body |
-| Folder hierarchy | Parent-child relationships as directories |
-| Short IDs | Type `a3f` instead of `dots-a3f2b1c8d9e04a7b` |
-| Archive | Completed tasks out of sight, available if needed |
-| Zero dependencies | Single binary, no runtime requirements |
+| Feature           | Description                                    |
+| ----------------- | ---------------------------------------------- |
+| Markdown files    | Human-readable, git-friendly storage           |
+| YAML frontmatter  | Structured metadata with flexible body         |
+| Scoped IDs        | `app-001` instead of opaque hex strings        |
+| Short prefixes    | Type `app-0` instead of the full ID            |
+| Archive           | Closed tasks out of sight, available if needed |
+| Zero dependencies | Single binary, no runtime requirements         |
 
 ## License
 

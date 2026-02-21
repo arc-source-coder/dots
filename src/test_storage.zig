@@ -31,12 +31,12 @@ test "storage: dependency cycle rejected" {
     };
 
     // Add A depends on B (A->B)
-    ts.storage.addDependency("test-001", "test-002", "blocks") catch |err| {
+    ts.storage.addDependency("test-001", "test-002", "blockers") catch |err| {
         std.debug.panic("add A->B: {}", .{err});
     };
 
     // Try to add B depends on A (B->A) - should fail with DependencyCycle
-    const cycle_result = ts.storage.addDependency("test-002", "test-001", "blocks");
+    const cycle_result = ts.storage.addDependency("test-002", "test-001", "blockers");
     try std.testing.expectError(error.DependencyCycle, cycle_result);
 }
 
@@ -63,7 +63,7 @@ test "storage: delete cascade unblocks dependents" {
     };
 
     // Add dependency: dependent blocked by blocker
-    ts.storage.addDependency("dependent-002", "blocker-001", "blocks") catch |err| {
+    ts.storage.addDependency("dependent-002", "blocker-001", "blockers") catch |err| {
         std.debug.panic("add dep: {}", .{err});
     };
 
@@ -103,7 +103,7 @@ test "storage: delete cleans up dependency refs" {
 
     const external = makeTestIssue("test-021", .open);
     try ts.storage.createIssue(external);
-    try ts.storage.addDependency("test-021", "test-020", "blocks");
+    try ts.storage.addDependency("test-021", "test-020", "blockers");
 
     // Verify external is blocked
     const ready1 = try ts.storage.getReadyIssues();
@@ -122,10 +122,10 @@ test "storage: delete cleans up dependency refs" {
     try std.testing.expectEqual(@as(usize, 1), ready2.len);
     try std.testing.expectEqualStrings("test-021", ready2[0].id);
 
-    // Verify external's blocks array is now empty
+    // Verify external's blockers array is now empty
     var ext = try ts.storage.getIssue("test-021") orelse return error.TestUnexpectedResult;
     defer ext.deinit(allocator);
-    try std.testing.expectEqual(@as(usize, 0), ext.blocks.len);
+    try std.testing.expectEqual(@as(usize, 0), ext.blockers.len);
 }
 
 test "storage: ID prefix resolution" {
@@ -147,7 +147,7 @@ test "storage: ID prefix resolution" {
         .created_at = fixed_timestamp,
         .closed_at = null,
         .close_reason = null,
-        .blocks = &.{},
+        .blockers = &.{},
     };
     ts.storage.createIssue(issue) catch |err| {
         std.debug.panic("create: {}", .{err});
@@ -181,7 +181,7 @@ test "storage: ambiguous ID prefix errors" {
         .created_at = fixed_timestamp,
         .closed_at = null,
         .close_reason = null,
-        .blocks = &.{},
+        .blockers = &.{},
     };
     ts.storage.createIssue(issue1) catch |err| {
         std.debug.panic("create1: {}", .{err});
@@ -196,7 +196,7 @@ test "storage: ambiguous ID prefix errors" {
         .created_at = fixed_timestamp,
         .closed_at = null,
         .close_reason = null,
-        .blocks = &.{},
+        .blockers = &.{},
     };
     ts.storage.createIssue(issue2) catch |err| {
         std.debug.panic("create2: {}", .{err});
@@ -323,7 +323,7 @@ test "storage: invalid block id rejected" {
         \\priority: 2
         \\issue-type: task
         \\created-at: 2024-01-01T00:00:00Z
-        \\blocks:
+        \\blockers:
         \\  - ../nope
         \\---
     ;
@@ -331,4 +331,78 @@ test "storage: invalid block id rejected" {
 
     const result = ts.storage.getIssue("bad-003");
     try std.testing.expectError(error.InvalidFrontmatter, result);
+}
+
+test "storage: quoted timestamp roundtrip does not double-escape" {
+    // Regression test to verify that timestamps stored with quotes are
+    // unescaped when read, preventing escape accumulation across save cycles.
+    const allocator = std.testing.allocator;
+
+    var test_dir = setupTestDirOrPanic(allocator);
+    defer test_dir.cleanup();
+
+    var ts = openTestStorage(allocator, &test_dir);
+    defer ts.deinit();
+
+    try ts.storage.dots_dir.makeDir("test");
+
+    // Write file with a QUOTED timestamp (simulating the bug that happened after first save with quoting)
+    // The timestamp is stored WITH quotes in the file - this is the "bad" state
+    const quoted_timestamp_file =
+        \\---
+        \\title: Test issue
+        \\status: open
+        \\priority: 2
+        \\created-at: "2024-01-01T00:00:00Z"
+        \\---
+    ;
+    try ts.storage.dots_dir.writeFile(.{ .sub_path = "test/test-001.md", .data = quoted_timestamp_file });
+
+    // First read - should unescape the quotes
+    var issue1 = (try ts.storage.getIssue("test-001")) orelse return error.TestUnexpectedResult;
+    defer issue1.deinit(allocator);
+
+    // The timestamp should be unescaped (without quotes) - this is the core fix!
+    try std.testing.expectEqualStrings("2024-01-01T00:00:00Z", issue1.created_at);
+
+    // Now create a NEW issue with this data (simulating writing it back to disk)
+    // If the parsing is correct, this should serialize cleanly WITHOUT quotes
+    const issue2: Issue = .{
+        .id = "test-002",
+        .title = issue1.title,
+        .description = issue1.description,
+        .status = issue1.status,
+        .priority = issue1.priority,
+        .created_at = issue1.created_at,
+        .closed_at = null,
+        .close_reason = null,
+        .blockers = &.{},
+    };
+    try ts.storage.createIssue(issue2);
+
+    // Read the new issue - should have clean timestamp
+    var issue3 = (try ts.storage.getIssue("test-002")) orelse return error.TestUnexpectedResult;
+    defer issue3.deinit(allocator);
+
+    // The timestamp should still be clean (not double-escaped)
+    try std.testing.expectEqualStrings("2024-01-01T00:00:00Z", issue3.created_at);
+
+    // Do another round-trip to be sure - create issue 3 from issue 2's data
+    const issue4: Issue = .{
+        .id = "test-003",
+        .title = issue3.title,
+        .description = issue3.description,
+        .status = issue3.status,
+        .priority = issue3.priority,
+        .created_at = issue3.created_at,
+        .closed_at = null,
+        .close_reason = null,
+        .blockers = &.{},
+    };
+    try ts.storage.createIssue(issue4);
+
+    var issue5 = (try ts.storage.getIssue("test-003")) orelse return error.TestUnexpectedResult;
+    defer issue5.deinit(allocator);
+
+    try std.testing.expectEqualStrings("2024-01-01T00:00:00Z", issue5.created_at);
 }
