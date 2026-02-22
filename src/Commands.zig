@@ -547,6 +547,13 @@ fn cmdList(allocator: Allocator, args: []const []const u8) !void {
     const issues = try storage.listIssues(null);
     defer issue_mod.freeIssues(allocator, issues);
 
+    // Build ID → issue index lookup for cross-scope blocker resolution
+    var issue_by_id: std.StringHashMapUnmanaged(usize) = .empty;
+    defer issue_by_id.deinit(allocator);
+    for (issues, 0..) |issue, i| {
+        try issue_by_id.put(allocator, issue.id, i);
+    }
+
     const w = stdout();
     const tty_conf = std.Io.tty.Config.detect(fs.File.stdout());
 
@@ -586,22 +593,38 @@ fn cmdList(allocator: Allocator, args: []const []const u8) !void {
         var is_child: std.StringHashMapUnmanaged(void) = .empty;
         defer is_child.deinit(allocator);
 
+        // Cross-scope blockers: issue ID → list of non-closed blocker IDs from other scopes
+        var cross_blockers: std.StringHashMapUnmanaged(std.ArrayList([]const u8)) = .empty;
+        defer {
+            var cit = cross_blockers.iterator();
+            while (cit.next()) |entry| entry.value_ptr.deinit(allocator);
+            cross_blockers.deinit(allocator);
+        }
+
         for (visible.items) |idx| {
             const issue = issues[idx];
-            for (issue.blockers) |blocked_id| {
-                if (!visible_ids.contains(blocked_id)) continue;
+            for (issue.blockers) |blocker_id| {
+                if (visible_ids.contains(blocker_id)) {
+                    const entry = try children_map.getOrPut(allocator, issue.id);
+                    if (!entry.found_existing) entry.value_ptr.* = .empty;
 
-                const entry = try children_map.getOrPut(allocator, issue.id);
-                if (!entry.found_existing) entry.value_ptr.* = .empty;
-
-                // Find the visible index for blocked_id
-                for (visible.items) |vidx| {
-                    if (std.mem.eql(u8, issues[vidx].id, blocked_id)) {
-                        try entry.value_ptr.append(allocator, vidx);
-                        break;
+                    for (visible.items) |vidx| {
+                        if (std.mem.eql(u8, issues[vidx].id, blocker_id)) {
+                            try entry.value_ptr.append(allocator, vidx);
+                            break;
+                        }
+                    }
+                    try is_child.put(allocator, blocker_id, {});
+                } else if (issue_by_id.get(blocker_id)) |bidx| {
+                    if (issues[bidx].status != .closed) {
+                        const blocker_scope = issue_mod.extractScope(blocker_id) orelse continue;
+                        if (!std.mem.eql(u8, blocker_scope, scope)) {
+                            const cb = try cross_blockers.getOrPut(allocator, issue.id);
+                            if (!cb.found_existing) cb.value_ptr.* = .empty;
+                            try cb.value_ptr.append(allocator, blocker_id);
+                        }
                     }
                 }
-                try is_child.put(allocator, blocked_id, {});
             }
         }
 
@@ -616,7 +639,7 @@ fn cmdList(allocator: Allocator, args: []const []const u8) !void {
 
         for (roots.items, 0..) |idx, j| {
             const is_last = j + 1 == roots.items.len;
-            try renderTreeNode(allocator, w, tty_conf, issues, &children_map, idx, "  ", is_last);
+            try renderTreeNode(allocator, w, tty_conf, issues, &children_map, &cross_blockers, idx, "  ", is_last);
         }
     }
 }
@@ -627,6 +650,7 @@ fn renderTreeNode(
     tty_conf: std.Io.tty.Config,
     issues: []const Issue,
     children_map: *const std.StringHashMapUnmanaged(std.ArrayList(usize)),
+    cross_blockers: *const std.StringHashMapUnmanaged(std.ArrayList([]const u8)),
     idx: usize,
     prefix: []const u8,
     is_last: bool,
@@ -646,6 +670,15 @@ fn renderTreeNode(
         try tty_conf.setColor(w, .reset);
     }
 
+    if (cross_blockers.get(issue.id)) |blockers| {
+        try w.writeAll(" [Blocked by ");
+        for (blockers.items, 0..) |bid, bi| {
+            if (bi > 0) try w.writeAll(", ");
+            try w.writeAll(bid);
+        }
+        try w.writeAll("]");
+    }
+
     try w.writeAll("\n");
 
     const children = children_map.get(issue.id) orelse return;
@@ -655,7 +688,7 @@ fn renderTreeNode(
 
     for (children.items, 0..) |child_idx, k| {
         const child_is_last = k + 1 == children.items.len;
-        try renderTreeNode(allocator, w, tty_conf, issues, children_map, child_idx, child_prefix, child_is_last);
+        try renderTreeNode(allocator, w, tty_conf, issues, children_map, cross_blockers, child_idx, child_prefix, child_is_last);
     }
 }
 
