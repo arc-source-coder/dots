@@ -440,11 +440,24 @@ fn cmdShow(allocator: Allocator, args: []const []const u8) !void {
     if (iss.closed_at) |ca| try w.print("Closed   : {s}\n", .{ca});
     if (iss.close_reason) |r| try w.print("Reason   : {s}\n", .{r});
 
-    // Blocked by: issues listed in iss.blockers.
-    if (iss.blockers.len > 0) {
+    // Blocked by: issues listed in iss.blockers (filter out closed blockers).
+    var open_blocker_ids: std.ArrayList([]const u8) = .{};
+    defer open_blocker_ids.deinit(allocator);
+
+    for (iss.blockers) |blocker_id| {
+        if (try storage.getIssue(blocker_id)) |blocker| {
+            var bl = blocker;
+            defer bl.deinit(allocator);
+            if (bl.status != .closed) {
+                try open_blocker_ids.append(allocator, blocker_id);
+            }
+        }
+    }
+
+    if (open_blocker_ids.items.len > 0) {
         try w.writeAll("\nBlocked by:\n");
-        for (iss.blockers, 0..) |blocker_id, j| {
-            const connector: []const u8 = if (j + 1 == iss.blockers.len) "  └─" else "  ├─";
+        for (open_blocker_ids.items, 0..) |blocker_id, j| {
+            const connector: []const u8 = if (j + 1 == open_blocker_ids.items.len) "  └─" else "  ├─";
             if (try storage.getIssue(blocker_id)) |blocker| {
                 var bl = blocker;
                 defer bl.deinit(allocator);
