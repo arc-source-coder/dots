@@ -58,7 +58,9 @@ dot open "Fix the login bug" -s app
 
 # List tasks
 dot list
-# Output: [app-001] o Fix the login bug
+# Output:
+# app (1 open)
+#   └─ app-001 ○ Fix the login bug
 
 # Start working
 dot start app-001
@@ -117,20 +119,20 @@ dot open "Implement API" -d "REST endpoints" -s app
 ### List Tasks
 
 ```bash
-dot list [--status STATUS]
+dot list [scope]
 dot ls   # alias
 ```
 
-Options:
-
-- `--status`: Filter by `open`, `active`, or `closed` (default: shows all non-closed)
+Shows all scopes with their open/active issues in a tree format. Pass a scope name to filter to that scope.
 
 Output format:
 
 ```
-[app-001] o Design API       # o = open
-[app-002] > Implement API    # > = active
-[app-003] x Write tests      # x = closed
+app (2 open)
+  ├─ app-001 ○ Design API
+  └─ app-002 > Implement API
+docs (1 open)
+  └─ docs-001 ○ API documentation
 ```
 
 ### Start Working
@@ -180,22 +182,6 @@ Blocked by:
 
 Blocks:
   └─ app-003 (open) - Write tests
-```
-
-### Show Dependency Tree
-
-```bash
-dot tree [scope]
-```
-
-Shows all scopes and their open/active issues. Pass a scope name to filter.
-
-```
-app (2 open)
-  ├─ app-001 ○ Design API
-  └─ app-002 ○ Implement API
-docs (1 open)
-  └─ docs-001 ○ API documentation
 ```
 
 ### Block / Unblock

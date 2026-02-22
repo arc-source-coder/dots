@@ -121,12 +121,12 @@ test "snap: tree output format" {
     };
     defer d1.deinit(allocator);
 
-    const tree = runDot(allocator, &.{"tree"}, test_dir.path) catch |err| {
-        std.debug.panic("tree: {}", .{err});
+    const list = runDot(allocator, &.{"list"}, test_dir.path) catch |err| {
+        std.debug.panic("list: {}", .{err});
     };
-    defer tree.deinit(allocator);
+    defer list.deinit(allocator);
 
-    try std.testing.expect(tree.stderr.len == 0);
+    try std.testing.expect(list.stderr.len == 0);
 
     const oh: OhSnap = .{};
     try oh.snap(@src(),
@@ -137,5 +137,5 @@ test "snap: tree output format" {
         \\docs (1 open)
         \\  └─ docs-001 ○ API docs
         \\"
-    ).expectEqual(tree.stdout);
+    ).expectEqual(list.stdout);
 }

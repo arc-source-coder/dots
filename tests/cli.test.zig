@@ -366,23 +366,23 @@ test "cli: find searches archive fields and orders results" {
     ).expectEqual(find_closed.stderr);
 }
 
-test "cli: tree help" {
+test "cli: list help" {
     const allocator = std.testing.allocator;
 
     var test_dir = setupTestDirOrPanic(allocator);
     defer test_dir.cleanup();
 
-    const help = runDot(allocator, &.{ "tree", "--help" }, test_dir.path) catch |err| {
-        std.debug.panic("tree help: {}", .{err});
+    const help = runDot(allocator, &.{ "list", "--help" }, test_dir.path) catch |err| {
+        std.debug.panic("list help: {}", .{err});
     };
     defer help.deinit(allocator);
 
     try std.testing.expect(isExitCode(help.term, 0));
-    try std.testing.expect(std.mem.indexOf(u8, help.stdout, "Usage: dot tree [scope]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, help.stdout, "Usage: dot list [scope]") != null);
     try std.testing.expect(help.stderr.len == 0);
 }
 
-test "cli: tree shows scopes and issues" {
+test "cli: list shows scopes and issues" {
     const allocator = std.testing.allocator;
 
     var test_dir = setupTestDirOrPanic(allocator);
@@ -397,23 +397,23 @@ test "cli: tree shows scopes and issues" {
     const d1 = try runDot(allocator, &.{ "open", "API docs", "-s", "docs" }, test_dir.path);
     defer d1.deinit(allocator);
 
-    const tree = try runDot(allocator, &.{"tree"}, test_dir.path);
-    defer tree.deinit(allocator);
+    const list = try runDot(allocator, &.{"list"}, test_dir.path);
+    defer list.deinit(allocator);
 
-    try std.testing.expect(isExitCode(tree.term, 0));
-    try std.testing.expect(tree.stderr.len == 0);
+    try std.testing.expect(isExitCode(list.term, 0));
+    try std.testing.expect(list.stderr.len == 0);
 
     // Verify scope headers appear
-    try std.testing.expect(std.mem.indexOf(u8, tree.stdout, "app (2 open)") != null);
-    try std.testing.expect(std.mem.indexOf(u8, tree.stdout, "docs (1 open)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, list.stdout, "app (2 open)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, list.stdout, "docs (1 open)") != null);
 
     // Verify issues appear
-    try std.testing.expect(std.mem.indexOf(u8, tree.stdout, "Fix login") != null);
-    try std.testing.expect(std.mem.indexOf(u8, tree.stdout, "Setup DB") != null);
-    try std.testing.expect(std.mem.indexOf(u8, tree.stdout, "API docs") != null);
+    try std.testing.expect(std.mem.indexOf(u8, list.stdout, "Fix login") != null);
+    try std.testing.expect(std.mem.indexOf(u8, list.stdout, "Setup DB") != null);
+    try std.testing.expect(std.mem.indexOf(u8, list.stdout, "API docs") != null);
 }
 
-test "cli: tree filters by scope" {
+test "cli: list filters by scope" {
     const allocator = std.testing.allocator;
 
     var test_dir = setupTestDirOrPanic(allocator);
@@ -426,16 +426,16 @@ test "cli: tree filters by scope" {
     const d1 = try runDot(allocator, &.{ "open", "API docs", "-s", "docs" }, test_dir.path);
     defer d1.deinit(allocator);
 
-    const tree = try runDot(allocator, &.{ "tree", "app" }, test_dir.path);
-    defer tree.deinit(allocator);
+    const list = try runDot(allocator, &.{ "list", "app" }, test_dir.path);
+    defer list.deinit(allocator);
 
-    try std.testing.expect(isExitCode(tree.term, 0));
-    try std.testing.expect(std.mem.indexOf(u8, tree.stdout, "app (1 open)") != null);
+    try std.testing.expect(isExitCode(list.term, 0));
+    try std.testing.expect(std.mem.indexOf(u8, list.stdout, "app (1 open)") != null);
     // docs scope should NOT appear
-    try std.testing.expect(std.mem.indexOf(u8, tree.stdout, "docs") == null);
+    try std.testing.expect(std.mem.indexOf(u8, list.stdout, "docs") == null);
 }
 
-test "cli: tree unknown scope fails" {
+test "cli: list unknown scope fails" {
     const allocator = std.testing.allocator;
 
     var test_dir = setupTestDirOrPanic(allocator);
@@ -443,14 +443,14 @@ test "cli: tree unknown scope fails" {
 
     _ = try runDot(allocator, &.{"init"}, test_dir.path);
 
-    const tree = try runDot(allocator, &.{ "tree", "nope" }, test_dir.path);
-    defer tree.deinit(allocator);
+    const list = try runDot(allocator, &.{ "list", "nope" }, test_dir.path);
+    defer list.deinit(allocator);
 
-    try std.testing.expect(!isExitCode(tree.term, 0));
-    try std.testing.expect(std.mem.indexOf(u8, tree.stderr, "Unknown scope: nope") != null);
+    try std.testing.expect(!isExitCode(list.term, 0));
+    try std.testing.expect(std.mem.indexOf(u8, list.stderr, "Unknown scope: nope") != null);
 }
 
-test "cli: tree hides closed issues" {
+test "cli: list hides closed issues" {
     const allocator = std.testing.allocator;
 
     var test_dir = setupTestDirOrPanic(allocator);
@@ -468,17 +468,17 @@ test "cli: tree hides closed issues" {
     const close = try runDot(allocator, &.{ "close", id2 }, test_dir.path);
     defer close.deinit(allocator);
 
-    const tree = try runDot(allocator, &.{"tree"}, test_dir.path);
-    defer tree.deinit(allocator);
+    const list = try runDot(allocator, &.{"list"}, test_dir.path);
+    defer list.deinit(allocator);
 
-    try std.testing.expect(isExitCode(tree.term, 0));
+    try std.testing.expect(isExitCode(list.term, 0));
     // Only 1 open issue remains visible
-    try std.testing.expect(std.mem.indexOf(u8, tree.stdout, "app (1 open)") != null);
-    try std.testing.expect(std.mem.indexOf(u8, tree.stdout, "Open task") != null);
-    try std.testing.expect(std.mem.indexOf(u8, tree.stdout, "Will close") == null);
+    try std.testing.expect(std.mem.indexOf(u8, list.stdout, "app (1 open)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, list.stdout, "Open task") != null);
+    try std.testing.expect(std.mem.indexOf(u8, list.stdout, "Will close") == null);
 }
 
-test "cli: tree shows empty scopes" {
+test "cli: list shows empty scopes" {
     const allocator = std.testing.allocator;
 
     var test_dir = setupTestDirOrPanic(allocator);
@@ -493,14 +493,14 @@ test "cli: tree shows empty scopes" {
     const close = try runDot(allocator, &.{ "close", id }, test_dir.path);
     defer close.deinit(allocator);
 
-    const tree = try runDot(allocator, &.{"tree"}, test_dir.path);
-    defer tree.deinit(allocator);
+    const list = try runDot(allocator, &.{"list"}, test_dir.path);
+    defer list.deinit(allocator);
 
-    try std.testing.expect(isExitCode(tree.term, 0));
-    try std.testing.expect(std.mem.indexOf(u8, tree.stdout, "empty (0 open)") != null);
+    try std.testing.expect(isExitCode(list.term, 0));
+    try std.testing.expect(std.mem.indexOf(u8, list.stdout, "empty (0 open)") != null);
 }
 
-test "cli: tree shows active issues with open count" {
+test "cli: list shows active issues with open count" {
     const allocator = std.testing.allocator;
 
     var test_dir = setupTestDirOrPanic(allocator);
@@ -518,14 +518,14 @@ test "cli: tree shows active issues with open count" {
     const start = try runDot(allocator, &.{ "start", id2 }, test_dir.path);
     defer start.deinit(allocator);
 
-    const tree = try runDot(allocator, &.{"tree"}, test_dir.path);
-    defer tree.deinit(allocator);
+    const list = try runDot(allocator, &.{"list"}, test_dir.path);
+    defer list.deinit(allocator);
 
-    try std.testing.expect(isExitCode(tree.term, 0));
+    try std.testing.expect(isExitCode(list.term, 0));
     // Both open + active count together
-    try std.testing.expect(std.mem.indexOf(u8, tree.stdout, "app (2 open)") != null);
-    try std.testing.expect(std.mem.indexOf(u8, tree.stdout, "Open task") != null);
-    try std.testing.expect(std.mem.indexOf(u8, tree.stdout, "Active task") != null);
+    try std.testing.expect(std.mem.indexOf(u8, list.stdout, "app (2 open)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, list.stdout, "Open task") != null);
+    try std.testing.expect(std.mem.indexOf(u8, list.stdout, "Active task") != null);
 }
 
 test "cli: block adds a blocking dependency" {

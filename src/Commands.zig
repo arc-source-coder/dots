@@ -28,7 +28,6 @@ const cmds = [_]Command{
     .{ .names = &.{ "rm", "delete" }, .handler = cmdRm },
     .{ .names = &.{"show"}, .handler = cmdShow },
     .{ .names = &.{"ready"}, .handler = cmdReady },
-    .{ .names = &.{"tree"}, .handler = cmdTree },
     .{ .names = &.{"find"}, .handler = cmdFind },
     .{ .names = &.{"block"}, .handler = cmdBlock },
     .{ .names = &.{"unblock"}, .handler = cmdUnblock },
@@ -157,13 +156,12 @@ fn printHelp(w: *std.Io.Writer) !void {
         \\
         \\Commands:
         \\  dot open "title" -s <scope>            Open a dot (-p priority, -d desc)
-        \\  dot list [--status S]                  List dots
+        \\  dot list [scope]                       Show scopes and issues
         \\  dot start <id>                         Start working on a dot
         \\  dot close <id|scope> [...] [-r reason] Close dots by id or scope
         \\  dot rm <id>                            Remove a dot
         \\  dot show <id>                          Show dot details and dependencies
         \\  dot ready                              Show unblocked dots
-        \\  dot tree [scope]                       Show scopes and issues
         \\  dot find "query"                       Search all dots
         \\  dot block <id> <blocker-id>            Mark id as blocked by blocker-id
         \\  dot unblock <id> <blocker-id>          Remove blocking relationship
@@ -269,22 +267,6 @@ fn cmdOpen(allocator: Allocator, args: []const []const u8) !void {
     try stdout().print("{s}\n", .{id});
 }
 
-fn cmdList(allocator: Allocator, args: []const []const u8) !void {
-    var filter_status: ?Status = null;
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        if (getArg(args, &i, "--status")) |v| filter_status = parseStatusArg(v);
-    }
-
-    var storage = try Storage.open(allocator);
-    defer storage.close();
-
-    const issues = try storage.listIssues(filter_status);
-    defer issue_mod.freeIssues(allocator, issues);
-
-    try writeIssueList(issues, filter_status == null);
-}
-
 fn cmdReady(allocator: Allocator, _: []const []const u8) !void {
     var storage = try Storage.open(allocator);
     defer storage.close();
@@ -292,13 +274,8 @@ fn cmdReady(allocator: Allocator, _: []const []const u8) !void {
     const issues = try storage.getReadyIssues();
     defer issue_mod.freeIssues(allocator, issues);
 
-    try writeIssueList(issues, false);
-}
-
-fn writeIssueList(issues: []const Issue, skip_done: bool) !void {
     const w = stdout();
     for (issues) |issue| {
-        if (skip_done and issue.status == .closed) continue;
         try w.print("[{s}] {c} {s}\n", .{ issue.id, issue.status.char(), issue.title });
     }
 }
@@ -487,10 +464,10 @@ fn cmdShow(allocator: Allocator, args: []const []const u8) !void {
     }
 }
 
-fn cmdTree(allocator: Allocator, args: []const []const u8) !void {
+fn cmdList(allocator: Allocator, args: []const []const u8) !void {
     if (hasFlag(args, "--help") or hasFlag(args, "-h")) {
         try stdout().writeAll(
-            \\Usage: dot tree [scope]
+            \\Usage: dot list [scope]
             \\
             \\Show all scopes and their issues in a tree format.
             \\Only open and active issues are displayed.
@@ -498,8 +475,8 @@ fn cmdTree(allocator: Allocator, args: []const []const u8) !void {
             \\If a scope is specified, only that scope is shown.
             \\
             \\Examples:
-            \\  dot tree          Show all scopes
-            \\  dot tree app      Show only the app scope
+            \\  dot list          Show all scopes
+            \\  dot list app      Show only the app scope
             \\
         );
         return;
