@@ -214,14 +214,6 @@ dot rm <id> [id2 ...]
 
 Permanently deletes task file(s) and removes any references to them from other tasks' dependency lists.
 
-### Search Tasks
-
-```bash
-dot find "query"
-```
-
-Case-insensitive search across title, description, close-reason, created-at, and closed-at. Shows open tasks first, then archived.
-
 ### Purge Archive
 
 ```bash

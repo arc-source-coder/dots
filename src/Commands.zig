@@ -28,7 +28,6 @@ const cmds = [_]Command{
     .{ .names = &.{ "rm", "delete" }, .handler = cmdRm },
     .{ .names = &.{"show"}, .handler = cmdShow },
     .{ .names = &.{"ready"}, .handler = cmdReady },
-    .{ .names = &.{"find"}, .handler = cmdFind },
     .{ .names = &.{"block"}, .handler = cmdBlock },
     .{ .names = &.{"unblock"}, .handler = cmdUnblock },
     .{ .names = &.{"update"}, .handler = cmdUpdate },
@@ -162,7 +161,6 @@ fn printHelp(w: *std.Io.Writer) !void {
         \\  dot rm <id>                            Remove a dot
         \\  dot show <id>                          Show dot details and dependencies
         \\  dot ready                              Show unblocked dots
-        \\  dot find "query"                       Search all dots
         \\  dot block <id> <blocker-id>            Mark id as blocked by blocker-id
         \\  dot unblock <id> <blocker-id>          Remove blocking relationship
         \\  dot purge                              Delete archived dots
@@ -619,42 +617,6 @@ fn renderTreeNode(
     for (children.items, 0..) |child_idx, k| {
         const child_is_last = k + 1 == children.items.len;
         try renderTreeNode(allocator, w, tty_conf, issues, children_map, child_idx, child_prefix, child_is_last);
-    }
-}
-
-fn cmdFind(allocator: Allocator, args: []const []const u8) !void {
-    if (args.len == 0 or hasFlag(args, "--help") or hasFlag(args, "-h")) {
-        try stdout().writeAll(
-            \\Usage: dot find <query>
-            \\
-            \\Search all dots (open first, then archived).
-            \\
-            \\Searches: title, description, close-reason, created-at, closed-at
-            \\
-            \\Examples:
-            \\  dot find "auth"      Search for dots mentioning auth
-            \\  dot find "2026-01"   Find dots from January 2026
-            \\
-        );
-        return;
-    }
-
-    var storage = try Storage.open(allocator);
-    defer storage.close();
-
-    const issues = try storage.searchIssues(args[0]);
-    defer issue_mod.freeIssues(allocator, issues);
-
-    const w = stdout();
-    for (issues) |issue| {
-        if (issue.status != .closed) {
-            try w.print("[{s}] {c} {s}\n", .{ issue.id, issue.status.char(), issue.title });
-        }
-    }
-    for (issues) |issue| {
-        if (issue.status == .closed) {
-            try w.print("[{s}] {c} {s}\n", .{ issue.id, issue.status.char(), issue.title });
-        }
     }
 }
 

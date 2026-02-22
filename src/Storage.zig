@@ -687,57 +687,6 @@ pub const Storage = struct {
         return false;
     }
 
-    pub fn searchIssues(self: *Storage, query: []const u8) ![]Issue {
-        const all_issues = try self.listAllIssuesIncludingArchived();
-        defer self.allocator.free(all_issues);
-
-        var matches: std.ArrayList(Issue) = .{};
-        errdefer {
-            for (matches.items) |*iss| iss.deinit(self.allocator);
-            matches.deinit(self.allocator);
-        }
-
-        matches.ensureTotalCapacity(self.allocator, all_issues.len) catch |err| {
-            for (all_issues) |*issue| issue.deinit(self.allocator);
-            return err;
-        };
-
-        for (all_issues) |*issue| { // *
-            const in_title = containsIgnoreCase(issue.title, query);
-            const in_desc = containsIgnoreCase(issue.description, query);
-            const in_reason = if (issue.close_reason) |r| containsIgnoreCase(r, query) else false;
-            const in_created = containsIgnoreCase(issue.created_at, query);
-            const in_closed = if (issue.closed_at) |c| containsIgnoreCase(c, query) else false;
-
-            if (in_title or in_desc or in_reason or in_created or in_closed) {
-                matches.appendAssumeCapacity(issue.*);
-            } else {
-                issue.deinit(self.allocator);
-            }
-        }
-
-        return matches.toOwnedSlice(self.allocator);
-    }
-
-    fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
-        if (needle.len == 0) return true;
-        if (needle.len > haystack.len) return false;
-
-        var i: usize = 0;
-        while (i + needle.len <= haystack.len) : (i += 1) {
-            if (asciiEqualIgnoreCase(haystack[i .. i + needle.len], needle)) return true;
-        }
-        return false;
-    }
-
-    fn asciiEqualIgnoreCase(a: []const u8, b: []const u8) bool {
-        if (a.len != b.len) return false;
-        for (a, b) |ac, bc| {
-            if (std.ascii.toLower(ac) != std.ascii.toLower(bc)) return false;
-        }
-        return true;
-    }
-
     pub fn removeDependency(self: *Storage, issue_id: []const u8, depends_on_id: []const u8) !void {
         try issue_mod.validateId(issue_id);
         try issue_mod.validateId(depends_on_id);
