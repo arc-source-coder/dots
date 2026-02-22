@@ -181,11 +181,11 @@ test "prop: update done sets closed_at" {
 
             const expects_closed = args.done;
             if (expects_closed) {
-                if (std.mem.indexOf(u8, show.stdout, "Closed:") == null) return false;
-                if (std.mem.indexOf(u8, show.stdout, "Status:   done") == null) return false;
+                if (std.mem.indexOf(u8, show.stdout, "Closed   :") == null) return false;
+                if (std.mem.indexOf(u8, show.stdout, "Status   : done") == null) return false;
             } else {
-                if (std.mem.indexOf(u8, show.stdout, "Closed:") != null) return false;
-                if (std.mem.indexOf(u8, show.stdout, "Status:   open") == null) return false;
+                if (std.mem.indexOf(u8, show.stdout, "Closed   :") != null) return false;
+                if (std.mem.indexOf(u8, show.stdout, "Status   : open") == null) return false;
             }
 
             return true;

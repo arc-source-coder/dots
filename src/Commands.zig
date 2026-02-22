@@ -408,21 +408,25 @@ fn cmdShow(allocator: Allocator, args: []const []const u8) !void {
     const w = stdout();
     const tty_conf = std.Io.tty.Config.detect(fs.File.stdout());
 
-    // Print header fields; highlight the focal ID in cyan.
-    try w.writeAll("ID:       ");
-    try tty_conf.setColor(w, .cyan);
+    // Print header: ID • Title
+    try tty_conf.setColor(w, .yellow);
     try w.writeAll(iss.id);
     try tty_conf.setColor(w, .reset);
-    try w.print("\nTitle:    {s}\nStatus:   {s}\nPriority: {d}\nLocation: {s}\n", .{
-        iss.title,
-        iss.status.display(),
-        iss.priority,
-        issue_path,
-    });
-    if (iss.description.len > 0) try w.print("Desc:     {s}\n", .{iss.description});
-    try w.print("Created:  {s}\n", .{iss.created_at});
-    if (iss.closed_at) |ca| try w.print("Closed:   {s}\n", .{ca});
-    if (iss.close_reason) |r| try w.print("Reason:   {s}\n", .{r});
+    try w.print(" • {s}\n", .{iss.title});
+
+    // Description (if present)
+    if (iss.description.len > 0) {
+        try w.print("\n{s}\n", .{iss.description});
+    }
+
+    // Metadata fields - align on colon (longest is 8 chars: Priority/Location)
+    try w.writeAll("\n");
+    try w.print("Priority : {d}\n", .{iss.priority});
+    try w.print("Status   : {s}\n", .{iss.status.display()});
+    try w.print("Location : {s}\n", .{issue_path});
+    try w.print("Created  : {s}\n", .{iss.created_at});
+    if (iss.closed_at) |ca| try w.print("Closed   : {s}\n", .{ca});
+    if (iss.close_reason) |r| try w.print("Reason   : {s}\n", .{r});
 
     // Blocked by: issues listed in iss.blockers.
     if (iss.blockers.len > 0) {
