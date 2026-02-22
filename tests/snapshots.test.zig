@@ -39,7 +39,7 @@ test "snap: markdown frontmatter format" {
     defer init.deinit(allocator);
 
     // Add a task with specific parameters
-    const add = runDot(allocator, &.{
+    const open = runDot(allocator, &.{
         "open", "Test snapshot task",
         "-p",   "1",
         "-d",   "This is a description",
@@ -47,9 +47,9 @@ test "snap: markdown frontmatter format" {
     }, test_dir.path) catch |err| {
         std.debug.panic("add: {}", .{err});
     };
-    defer add.deinit(allocator);
+    defer open.deinit(allocator);
 
-    const id = std.mem.trimEnd(u8, add.stdout, "\n");
+    const id = std.mem.trimEnd(u8, open.stdout, " opened.\n");
 
     // Read the markdown file
     const md_path = std.fmt.allocPrint(allocator, "{s}/.dots/test/{s}.md", .{ test_dir.path, id }) catch |err| {

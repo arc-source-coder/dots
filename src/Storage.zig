@@ -434,21 +434,59 @@ pub const Storage = struct {
         // Don't archive if already in archive
         if (std.mem.startsWith(u8, path, "archive/")) return;
 
+        const scope = issue_mod.extractScope(id);
+
         var archive_path_buf: [max_path_len]u8 = undefined;
-        if (issue_mod.extractScope(id)) |scope| {
+        if (scope) |s| {
             var archive_scope_buf: [max_path_len]u8 = undefined;
-            const archive_scope = std.fmt.bufPrint(&archive_scope_buf, "archive/{s}", .{scope}) catch return StorageError.IoError;
+            const archive_scope = std.fmt.bufPrint(&archive_scope_buf, "archive/{s}", .{s}) catch return StorageError.IoError;
             self.dots_dir.makeDir(archive_scope) catch |err| switch (err) {
                 error.PathAlreadyExists => {},
                 else => return err,
             };
-            const archive_path = std.fmt.bufPrint(&archive_path_buf, "archive/{s}/{s}.md", .{ scope, id }) catch return StorageError.IoError;
+            const archive_path = std.fmt.bufPrint(&archive_path_buf, "archive/{s}/{s}.md", .{ s, id }) catch return StorageError.IoError;
             try self.dots_dir.rename(path, archive_path);
+            // ziglint-ignore: Z026 - Best effort cleanup
+            self.deleteEmptyScopeDir(s) catch {};
             return;
         }
 
         const archive_path = std.fmt.bufPrint(&archive_path_buf, "archive/{s}.md", .{id}) catch return StorageError.IoError;
         try self.dots_dir.rename(path, archive_path);
+    }
+
+    fn maybeUnarchive(self: *Storage, id: []const u8, path: []const u8) !void {
+        if (!std.mem.startsWith(u8, path, "archive/")) return;
+
+        const scope = issue_mod.extractScope(id) orelse return IssueError.InvalidId;
+
+        self.dots_dir.makeDir(scope) catch |err| switch (err) {
+            error.PathAlreadyExists => {},
+            else => return err,
+        };
+
+        var main_path_buf: [max_path_len]u8 = undefined;
+        const main_path = std.fmt.bufPrint(&main_path_buf, "{s}/{s}.md", .{ scope, id }) catch return StorageError.IoError;
+        try self.dots_dir.rename(path, main_path);
+
+        var archive_scope_buf: [max_path_len]u8 = undefined;
+        const archive_scope = std.fmt.bufPrint(&archive_scope_buf, "archive/{s}", .{scope}) catch return StorageError.IoError;
+        // ziglint-ignore: Z026 - Best effort cleanup
+        self.deleteEmptyScopeDir(archive_scope) catch {};
+    }
+
+    fn deleteEmptyScopeDir(self: *Storage, scope: []const u8) !void {
+        var scope_dir = self.dots_dir.openDir(scope, .{ .iterate = true }) catch |err| switch (err) {
+            error.FileNotFound => return,
+            else => return err,
+        };
+        defer scope_dir.close();
+
+        var iter = scope_dir.iterate();
+        if (iter.next() catch return) |_| return;
+
+        // ziglint-ignore: Z026 - Best effort cleanup
+        self.dots_dir.deleteDir(scope) catch {};
     }
 
     pub fn deleteIssue(self: *Storage, id: []const u8) !void {
@@ -840,5 +878,13 @@ pub const Storage = struct {
             error.PathAlreadyExists => {},
             else => return err,
         };
+    }
+
+    pub fn reopenIssue(self: *Storage, id: []const u8) !void {
+        const path = try self.findIssuePath(id);
+        defer self.allocator.free(path);
+
+        try self.maybeUnarchive(id, path);
+        try self.updateStatus(id, .open, null, null);
     }
 };

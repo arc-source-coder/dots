@@ -30,9 +30,9 @@ const cmds = [_]Command{
     .{ .names = &.{"ready"}, .handler = cmdReady },
     .{ .names = &.{"block"}, .handler = cmdBlock },
     .{ .names = &.{"unblock"}, .handler = cmdUnblock },
-    .{ .names = &.{"update"}, .handler = cmdUpdate },
     .{ .names = &.{"purge"}, .handler = cmdPurge },
     .{ .names = &.{"init"}, .handler = cmdInit },
+    .{ .names = &.{"reopen"}, .handler = cmdReopen },
 };
 
 fn findCommand(name: []const u8) ?Handler {
@@ -158,6 +158,7 @@ fn printHelp(w: *std.Io.Writer) !void {
         \\  dot list [scope]                       Show scopes and issues
         \\  dot start <id>                         Start working on a dot
         \\  dot close <id|scope> [...] [-r reason] Close dots by id or scope
+        \\  dot reopen <id>                        Reopen a closed dot
         \\  dot rm <id>                            Remove a dot
         \\  dot show <id>                          Show dot details and dependencies
         \\  dot ready                              Show unblocked dots
@@ -172,6 +173,7 @@ fn printHelp(w: *std.Io.Writer) !void {
         \\  dot open "Design API" -p 1 -d "REST endpoints" -s app
         \\  dot start app-003
         \\  dot close app-003 -r "shipped"
+        \\  dot reopen app-003
         \\  dot block app-002 app-001
         \\  dot unblock app-002 app-001
         \\
@@ -262,7 +264,7 @@ fn cmdOpen(allocator: Allocator, args: []const []const u8) !void {
     };
 
     try storage.createIssue(issue);
-    try stdout().print("{s}\n", .{id});
+    try stdout().print("{s} opened.\n", .{id});
 }
 
 fn cmdReady(allocator: Allocator, _: []const []const u8) !void {
@@ -347,7 +349,16 @@ fn cmdClose(allocator: Allocator, args: []const []const u8) !void {
         } else {
             const resolved = resolveIdOrFatal(&storage, arg);
             defer allocator.free(resolved);
-            try storage.updateStatus(resolved, .closed, now, reason);
+
+            var iss = try storage.getIssue(resolved) orelse unreachable;
+            defer iss.deinit(allocator);
+
+            if (iss.status == .closed) {
+                try stdout().print("{s} is already closed.\n", .{resolved});
+            } else {
+                try storage.updateStatus(resolved, .closed, now, reason);
+                try stdout().print("{s} closed.\n", .{resolved});
+            }
         }
     }
 }
@@ -365,6 +376,7 @@ fn closeScopeIssues(allocator: Allocator, storage: *Storage, scope: []const u8, 
         const issue_scope = issue_mod.extractScope(issue.id) orelse continue;
         if (!std.mem.eql(u8, issue_scope, scope)) continue;
         try storage.updateStatus(issue.id, .closed, now, reason);
+        try stdout().print("{s} closed.\n", .{issue.id});
         closed += 1;
     }
 
@@ -514,6 +526,11 @@ fn cmdList(allocator: Allocator, args: []const []const u8) !void {
         if (!found) fatal("Unknown scope: {s}\n", .{filter});
     }
 
+    if (scopes.len == 0) {
+        try stdout().writeAll("No issues open. For archived issues, see .dots/archives/\n");
+        return;
+    }
+
     const issues = try storage.listIssues(null);
     defer issue_mod.freeIssues(allocator, issues);
 
@@ -659,33 +676,38 @@ fn cmdUnblock(allocator: Allocator, args: []const []const u8) !void {
     try stdout().print("{s} is no longer blocked by {s}\n", .{ id, blocker_id });
 }
 
-fn cmdUpdate(allocator: Allocator, args: []const []const u8) !void {
-    if (args.len == 0) fatal("Usage: dot update <id> [--status S]\n", .{});
-
-    var new_status: ?Status = null;
-    var i: usize = 1;
-    while (i < args.len) : (i += 1) {
-        if (getArg(args, &i, "--status")) |v| new_status = parseStatusArg(v);
-    }
-
-    const status = new_status orelse fatal("--status required\n", .{});
-
-    var storage = try Storage.open(allocator);
-    defer storage.close();
-
-    const resolved = resolveIdOrFatal(&storage, args[0]);
-    defer allocator.free(resolved);
-
-    var ts_buf: [40]u8 = undefined;
-    const closed_at: ?[]const u8 = if (status == .closed) try formatTimestamp(&ts_buf) else null;
-
-    try storage.updateStatus(resolved, status, closed_at, null);
-}
-
 fn cmdPurge(allocator: Allocator, _: []const []const u8) !void {
     var storage = try Storage.open(allocator);
     defer storage.close();
 
     try storage.purgeArchive();
     try stdout().writeAll("Archive purged\n");
+}
+
+fn cmdReopen(allocator: Allocator, args: []const []const u8) !void {
+    if (args.len == 0) fatal("Usage: dot reopen <id> [id2 ...]\n", .{});
+
+    var storage = try Storage.open(allocator);
+    defer storage.close();
+
+    const results = try storage.resolveIds(args);
+    defer storage_mod.freeResolveResults(allocator, results);
+
+    for (results, 0..) |result, i| {
+        switch (result) {
+            .ok => |id| {
+                var iss = try storage.getIssue(id) orelse unreachable;
+                defer iss.deinit(allocator);
+
+                if (iss.status != .closed) {
+                    try stdout().print("{s} is already open.\n", .{id});
+                } else {
+                    try storage.reopenIssue(id);
+                    try stdout().print("{s} reopened.\n", .{id});
+                }
+            },
+            .not_found => fatal("Issue not found: {s}\n", .{args[i]}),
+            .ambiguous => fatal("Ambiguous ID: {s}\n", .{args[i]}),
+        }
+    }
 }

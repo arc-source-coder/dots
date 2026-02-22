@@ -52,7 +52,7 @@ test "cli: init creates dots directory" {
     dots_dir.close();
 }
 
-test "cli: add creates markdown file" {
+test "cli: open creates markdown file" {
     const allocator = std.testing.allocator;
 
     var test_dir = setupTestDirOrPanic(allocator);
@@ -70,7 +70,7 @@ test "cli: add creates markdown file" {
 
     try std.testing.expect(isExitCode(result.term, 0));
 
-    const id = std.mem.trimEnd(u8, result.stdout, "\n");
+    const id = std.mem.trimEnd(u8, result.stdout, " opened.\n");
     try std.testing.expect(id.len > 0);
 
     // Verify markdown file exists
@@ -102,7 +102,7 @@ test "cli: purge removes archived dots" {
     };
     defer add.deinit(allocator);
 
-    const id = std.mem.trimEnd(u8, add.stdout, "\n");
+    const id = std.mem.trimEnd(u8, add.stdout, " opened. \n");
 
     const off = runDot(allocator, &.{ "close", id }, test_dir.path) catch |err| {
         std.debug.panic("off: {}", .{err});
@@ -164,7 +164,7 @@ test "cli: add creates scope directory" {
         std.debug.panic("add scoped: {}", .{err});
     };
     defer add.deinit(allocator);
-    const id = std.mem.trimEnd(u8, add.stdout, "\n");
+    const id = std.mem.trimEnd(u8, add.stdout, " opened.\n");
 
     const scope_path = std.fmt.allocPrint(allocator, "{s}/.dots/test", .{test_dir.path}) catch |err| {
         std.debug.panic("path: {}", .{err});
@@ -283,7 +283,7 @@ test "cli: list hides closed issues" {
     defer a2.deinit(allocator);
 
     // Close the second issue
-    const id2 = std.mem.trimEnd(u8, a2.stdout, "\n");
+    const id2 = std.mem.trimEnd(u8, a2.stdout, " opened.\n");
     const close = try runDot(allocator, &.{ "close", id2 }, test_dir.path);
     defer close.deinit(allocator);
 
@@ -297,7 +297,7 @@ test "cli: list hides closed issues" {
     try std.testing.expect(std.mem.indexOf(u8, list.stdout, "Will close") == null);
 }
 
-test "cli: list shows empty scopes" {
+test "cli: list prints no issues found when no scopes found" {
     const allocator = std.testing.allocator;
 
     var test_dir = setupTestDirOrPanic(allocator);
@@ -305,10 +305,10 @@ test "cli: list shows empty scopes" {
 
     _ = try runDot(allocator, &.{"init"}, test_dir.path);
 
-    // Create an issue then close it so the scope dir exists but has 0 visible issues
+    // Create an issue then close it
     const a1 = try runDot(allocator, &.{ "open", "Temp", "-s", "empty" }, test_dir.path);
     defer a1.deinit(allocator);
-    const id = std.mem.trimEnd(u8, a1.stdout, "\n");
+    const id = std.mem.trimEnd(u8, a1.stdout, " opened.\n");
     const close = try runDot(allocator, &.{ "close", id }, test_dir.path);
     defer close.deinit(allocator);
 
@@ -316,7 +316,8 @@ test "cli: list shows empty scopes" {
     defer list.deinit(allocator);
 
     try std.testing.expect(isExitCode(list.term, 0));
-    try std.testing.expect(std.mem.indexOf(u8, list.stdout, "empty (0 open)") != null);
+    const expected = "No issues open. For archived issues, see .dots/archives/";
+    try std.testing.expect(std.mem.indexOf(u8, list.stdout, expected) != null);
 }
 
 test "cli: list shows active issues with open count" {
@@ -333,7 +334,7 @@ test "cli: list shows active issues with open count" {
     defer a2.deinit(allocator);
 
     // Start the second issue (becomes active)
-    const id2 = std.mem.trimEnd(u8, a2.stdout, "\n");
+    const id2 = std.mem.trimEnd(u8, a2.stdout, " opened.\n");
     const start = try runDot(allocator, &.{ "start", id2 }, test_dir.path);
     defer start.deinit(allocator);
 
@@ -360,8 +361,8 @@ test "cli: block adds a blocking dependency" {
     const a2 = try runDot(allocator, &.{ "open", "Fix login", "-s", "app" }, test_dir.path);
     defer a2.deinit(allocator);
 
-    const id1 = std.mem.trimEnd(u8, a1.stdout, "\n");
-    const id2 = std.mem.trimEnd(u8, a2.stdout, "\n");
+    const id1 = std.mem.trimEnd(u8, a1.stdout, " opened.\n");
+    const id2 = std.mem.trimEnd(u8, a2.stdout, " opened.\n");
 
     // Block id2 by id1
     const block = try runDot(allocator, &.{ "block", id2, id1 }, test_dir.path);
@@ -392,8 +393,8 @@ test "cli: unblock removes a blocking dependency" {
     const a2 = try runDot(allocator, &.{ "open", "Fix login", "-s", "app" }, test_dir.path);
     defer a2.deinit(allocator);
 
-    const id1 = std.mem.trimEnd(u8, a1.stdout, "\n");
-    const id2 = std.mem.trimEnd(u8, a2.stdout, "\n");
+    const id1 = std.mem.trimEnd(u8, a1.stdout, " opened.\n");
+    const id2 = std.mem.trimEnd(u8, a2.stdout, " opened.\n");
 
     const block1 = try runDot(allocator, &.{ "block", id2, id1 }, test_dir.path);
     defer block1.deinit(allocator);
@@ -429,8 +430,8 @@ test "cli: unblock unknown dependency fails" {
     const a2 = try runDot(allocator, &.{ "open", "Task B", "-s", "app" }, test_dir.path);
     defer a2.deinit(allocator);
 
-    const id1 = std.mem.trimEnd(u8, a1.stdout, "\n");
-    const id2 = std.mem.trimEnd(u8, a2.stdout, "\n");
+    const id1 = std.mem.trimEnd(u8, a1.stdout, " opened.\n");
+    const id2 = std.mem.trimEnd(u8, a2.stdout, " opened.\n");
 
     // No dependency exists — unblock should fail
     const unblock = try runDot(allocator, &.{ "unblock", id2, id1 }, test_dir.path);
@@ -452,8 +453,8 @@ test "cli: start warns when issue is blocked" {
     const a2 = try runDot(allocator, &.{ "open", "Fix login", "-s", "app" }, test_dir.path);
     defer a2.deinit(allocator);
 
-    const id1 = std.mem.trimEnd(u8, a1.stdout, "\n");
-    const id2 = std.mem.trimEnd(u8, a2.stdout, "\n");
+    const id1 = std.mem.trimEnd(u8, a1.stdout, " opened.\n");
+    const id2 = std.mem.trimEnd(u8, a2.stdout, " opened.\n");
 
     const block2 = try runDot(allocator, &.{ "block", id2, id1 }, test_dir.path);
     defer block2.deinit(allocator);
@@ -478,7 +479,7 @@ test "cli: start with no blockers produces no warning" {
     const a1 = try runDot(allocator, &.{ "open", "Clean task", "-s", "app" }, test_dir.path);
     defer a1.deinit(allocator);
 
-    const id1 = std.mem.trimEnd(u8, a1.stdout, "\n");
+    const id1 = std.mem.trimEnd(u8, a1.stdout, " opened.\n");
 
     const start = try runDot(allocator, &.{ "start", id1 }, test_dir.path);
     defer start.deinit(allocator);
@@ -501,8 +502,8 @@ test "cli: show displays blocked-by section" {
     const a2 = try runDot(allocator, &.{ "open", "Fix login", "-s", "app" }, test_dir.path);
     defer a2.deinit(allocator);
 
-    const id1 = std.mem.trimEnd(u8, a1.stdout, "\n");
-    const id2 = std.mem.trimEnd(u8, a2.stdout, "\n");
+    const id1 = std.mem.trimEnd(u8, a1.stdout, " opened.\n");
+    const id2 = std.mem.trimEnd(u8, a2.stdout, " opened.\n");
 
     const block3 = try runDot(allocator, &.{ "block", id2, id1 }, test_dir.path);
     defer block3.deinit(allocator);
@@ -529,8 +530,8 @@ test "cli: show displays blocks section" {
     const a2 = try runDot(allocator, &.{ "open", "Fix login", "-s", "app" }, test_dir.path);
     defer a2.deinit(allocator);
 
-    const id1 = std.mem.trimEnd(u8, a1.stdout, "\n");
-    const id2 = std.mem.trimEnd(u8, a2.stdout, "\n");
+    const id1 = std.mem.trimEnd(u8, a1.stdout, " opened.\n");
+    const id2 = std.mem.trimEnd(u8, a2.stdout, " opened.\n");
 
     const block4 = try runDot(allocator, &.{ "block", id2, id1 }, test_dir.path);
     defer block4.deinit(allocator);
@@ -554,7 +555,7 @@ test "cli: show with no dependencies omits dependency sections" {
 
     const a1 = try runDot(allocator, &.{ "open", "Standalone", "-s", "app" }, test_dir.path);
     defer a1.deinit(allocator);
-    const id1 = std.mem.trimEnd(u8, a1.stdout, "\n");
+    const id1 = std.mem.trimEnd(u8, a1.stdout, " opened.\n");
 
     const show = try runDot(allocator, &.{ "show", id1 }, test_dir.path);
     defer show.deinit(allocator);

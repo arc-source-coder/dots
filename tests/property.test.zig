@@ -141,7 +141,7 @@ test "prop: listIssues filter matches oracle" {
     }.property, .{ .iterations = 40, .seed = 0xC0FFEE });
 }
 
-test "prop: update done sets closed_at" {
+test "prop: close sets closed_at, reopen clears it" {
     const UpdateCase = struct {
         done: bool,
     };
@@ -158,20 +158,31 @@ test "prop: update done sets closed_at" {
             };
             defer init.deinit(allocator);
 
-            const add = runDot(allocator, &.{ "open", "Update done test", "-s", "test" }, test_dir.path) catch |err| {
+            const add = runDot(allocator, &.{ "open", "Close/reopen test", "-s", "test" }, test_dir.path) catch |err| {
                 std.debug.panic("add: {}", .{err});
             };
             defer add.deinit(allocator);
 
-            const id = std.mem.trimEnd(u8, add.stdout, "\n");
+            const id = std.mem.trimEnd(u8, add.stdout, " opened.\n");
             if (id.len == 0) return false;
 
-            const status = if (args.done) "done" else "open";
-            const update = runDot(allocator, &.{ "update", id, "--status", status }, test_dir.path) catch |err| {
-                std.debug.panic("update: {}", .{err});
+            // First close the issue (puts it in archive)
+            const close = runDot(allocator, &.{ "close", id }, test_dir.path) catch |err| {
+                std.debug.panic("close: {}", .{err});
             };
-            defer update.deinit(allocator);
-            if (!isExitCode(update.term, 0)) return false;
+            defer close.deinit(allocator);
+            if (!isExitCode(close.term, 0)) return false;
+
+            if (args.done) {
+                // Already closed, keep it closed
+            } else {
+                // Reopen it (moves from archive back to scope)
+                const reopen = runDot(allocator, &.{ "reopen", id }, test_dir.path) catch |err| {
+                    std.debug.panic("reopen: {}", .{err});
+                };
+                defer reopen.deinit(allocator);
+                if (!isExitCode(reopen.term, 0)) return false;
+            }
 
             const show = runDot(allocator, &.{ "show", id }, test_dir.path) catch |err| {
                 std.debug.panic("show: {}", .{err});
