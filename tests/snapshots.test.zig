@@ -1,6 +1,6 @@
 const std = @import("std");
 const fs = std.fs;
-const h = @import("test_helpers.zig");
+const h = @import("helpers.zig");
 
 const OhSnap = h.OhSnap;
 const runDot = h.runDot;
@@ -19,7 +19,7 @@ test "snap: simple struct" {
     const oh: OhSnap = .{};
     try oh.snap(
         @src(),
-        \\test_snapshots.test.snap: simple struct.TestStruct
+        \\snapshots.test.test.snap: simple struct.TestStruct
         \\  .name: []const u8
         \\    "test"
         \\  .value: i32 = 42

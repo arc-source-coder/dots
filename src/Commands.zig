@@ -2,15 +2,17 @@ const std = @import("std");
 const fs = std.fs;
 const Allocator = std.mem.Allocator;
 
-const storage_mod = @import("storage.zig");
+const issue_mod = @import("Issue.zig");
+const storage_mod = @import("Storage.zig");
 const build_options = @import("build_options");
 
+const Issue = issue_mod.Issue;
+const Status = issue_mod.Status;
 const Storage = storage_mod.Storage;
-const Issue = storage_mod.Issue;
-const Status = storage_mod.Status;
-const dots_dir = storage_mod.dots_dir;
 
-const default_priority: i64 = 2;
+const dots_dir = storage_mod.dots_dir;
+const default_priority = issue_mod.default_priority;
+
 const min_priority: i64 = 0;
 const max_priority: i64 = 9;
 
@@ -278,7 +280,7 @@ fn cmdList(allocator: Allocator, args: []const []const u8) !void {
     defer storage.close();
 
     const issues = try storage.listIssues(filter_status);
-    defer storage_mod.freeIssues(allocator, issues);
+    defer issue_mod.freeIssues(allocator, issues);
 
     try writeIssueList(issues, filter_status == null);
 }
@@ -288,7 +290,7 @@ fn cmdReady(allocator: Allocator, _: []const []const u8) !void {
     defer storage.close();
 
     const issues = try storage.getReadyIssues();
-    defer storage_mod.freeIssues(allocator, issues);
+    defer issue_mod.freeIssues(allocator, issues);
 
     try writeIssueList(issues, false);
 }
@@ -365,7 +367,7 @@ fn cmdClose(allocator: Allocator, args: []const []const u8) !void {
     const now = try formatTimestamp(&ts_buf);
 
     for (ids.items) |arg| {
-        if (storage_mod.extractScope(arg) == null) {
+        if (issue_mod.extractScope(arg) == null) {
             try closeScopeIssues(allocator, &storage, arg, now, reason);
         } else {
             const resolved = resolveIdOrFatal(&storage, arg);
@@ -385,7 +387,7 @@ fn closeScopeIssues(allocator: Allocator, storage: *Storage, scope: []const u8, 
     var closed: usize = 0;
     for (issues) |issue| {
         if (issue.status == .closed) continue;
-        const issue_scope = storage_mod.extractScope(issue.id) orelse continue;
+        const issue_scope = issue_mod.extractScope(issue.id) orelse continue;
         if (!std.mem.eql(u8, issue_scope, scope)) continue;
         try storage.updateStatus(issue.id, .closed, now, reason);
         closed += 1;
@@ -460,7 +462,7 @@ fn cmdShow(allocator: Allocator, args: []const []const u8) !void {
     // Blockers: issues that list iss.id in their blockers array.
     // Only scans active (non-archived) issues; archived dependents are done anyway.
     const all_issues = try storage.listIssues(null);
-    defer storage_mod.freeIssues(allocator, all_issues);
+    defer issue_mod.freeIssues(allocator, all_issues);
 
     // Collect indices of issues blocked by iss.id.
     var blocked_indices: std.ArrayList(usize) = .{};
@@ -515,7 +517,7 @@ fn cmdTree(allocator: Allocator, args: []const []const u8) !void {
     defer storage.close();
 
     const scopes = try storage.listScopes();
-    defer storage_mod.freeScopes(allocator, scopes);
+    defer issue_mod.freeScopes(allocator, scopes);
 
     if (scope_filter) |filter| {
         var found = false;
@@ -529,7 +531,7 @@ fn cmdTree(allocator: Allocator, args: []const []const u8) !void {
     }
 
     const issues = try storage.listIssues(null);
-    defer storage_mod.freeIssues(allocator, issues);
+    defer issue_mod.freeIssues(allocator, issues);
 
     const w = stdout();
     const tty_conf = std.Io.tty.Config.detect(fs.File.stdout());
@@ -544,7 +546,7 @@ fn cmdTree(allocator: Allocator, args: []const []const u8) !void {
 
         for (issues, 0..) |issue, i| {
             if (issue.status == .closed) continue;
-            const issue_scope = storage_mod.extractScope(issue.id) orelse continue;
+            const issue_scope = issue_mod.extractScope(issue.id) orelse continue;
             if (std.mem.eql(u8, issue_scope, scope)) {
                 try visible.append(allocator, i);
             }
@@ -664,7 +666,7 @@ fn cmdFind(allocator: Allocator, args: []const []const u8) !void {
     defer storage.close();
 
     const issues = try storage.searchIssues(args[0]);
-    defer storage_mod.freeIssues(allocator, issues);
+    defer issue_mod.freeIssues(allocator, issues);
 
     const w = stdout();
     for (issues) |issue| {

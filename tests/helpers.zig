@@ -4,7 +4,14 @@ const fs = std.fs;
 const build_options = @import("build_options");
 pub const dot_binary = build_options.dot_binary;
 
-pub const storage_mod = @import("storage.zig");
+const lib = @import("lib");
+pub const issue_mod = lib.issue_mod;
+pub const storage_mod = lib.storage_mod;
+
+pub const Issue = issue_mod.Issue;
+pub const Status = issue_mod.Status;
+pub const Storage = storage_mod.Storage;
+
 pub const zc = @import("zcheck");
 pub const OhSnap = @import("ohsnap");
 
@@ -21,10 +28,6 @@ pub const RunResult = struct {
         allocator.free(self.stderr);
     }
 };
-
-pub const Status = storage_mod.Status;
-pub const Issue = storage_mod.Issue;
-pub const Storage = storage_mod.Storage;
 
 pub fn isBlocking(status: Status) bool {
     return status == .open or status == .active;
@@ -416,6 +419,3 @@ pub const LifecycleOracle = struct {
         return count;
     }
 };
-
-// Operation types for lifecycle simulation
-pub const OpType = enum { create, delete, set_open, set_active, set_closed, add_dep };

@@ -1,6 +1,6 @@
 # Migration Progress
 
-Status as of 2026-02-20.
+Status as of 2026-02-22.
 
 ## Completed
 
@@ -48,13 +48,12 @@ Status as of 2026-02-20.
 
 ## LOC Reduction
 
-~1,500 lines removed. Current Zig source: **4,949 lines** (4,299 code) across 9 files.
+~1,500 lines removed. Current Zig source: **5,350 lines** (4,700 code) across 11 files.
 
 ## Build Status
 
 - `zig build` — ✅ clean
-- `zig build test` — ✅ passing after Phase 2/3 expectation updates
-- `test_cli_commands.zig` — enabled in `tests.zig`
+- `zig build test` — ✅ passing
 
 ## Known Issues
 
@@ -93,9 +92,35 @@ Re-enabled `cmdTree` with scope-aware rendering over `.dots/{scope}/{id}.md`.
 
 ## Remaining Phases
 
-### Phase 6: Codebase Reorganization
+## Phase 6: Codebase Reorganization ✅
 
-Split into `src/commands/`, `src/core/`, `src/storage/` layout per plan.
+Completed 2026-02-22:
+
+- Created `src/Issue.zig` (~250 lines) — pure data model + domain logic
+  - Types: `Issue`, `Status`, `IssueError`
+  - Validators: `validateId`
+  - Helpers: `extractScope`, `extractScopeNumber`, `freeIssues`, `freeScopes`
+  - Unit tests inline
+
+- Created `src/Frontmatter.zig` (~300 lines) — pure parse/serialize
+  - Types: `Frontmatter`, `ParseResult`
+  - Parsing: `parseFrontmatter`, `parseYamlValue`, `stripYamlQuotes`
+  - Serialization: `serializeFrontmatter`, `needsYamlQuoting`, `writeYamlValue`
+  - Unit tests inline
+
+- Slimmed `src/storage.zig` (~850 lines) — FS-bound operations only
+  - Removed Issue/Frontmatter types and parsing logic
+  - Imports from Issue.zig and Frontmatter.zig
+  - Defines `StorageError` (DependencyNotFound, DependencyCycle, DependencyConflict, IoError)
+  - Combined `Error` type = `StorageError || IssueError`
+
+- Updated `src/Commands.zig` — remapped imports to new modules
+
+- Moved tests to `tests/` directory:
+  - `helpers.zig`, `storage.test.zig`, `cli.test.zig`, `property.test.zig`, `snapshots.test.zig`
+  - Updated `tests/mod.zig` as test root
+
+- Updated `build.zig` — test module points to `tests/mod.zig`
 
 ## Decisions
 

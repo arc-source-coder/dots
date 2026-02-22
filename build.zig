@@ -42,11 +42,19 @@ pub fn build(b: *std.Build) void {
     test_options.addOption([]const u8, "dot_binary", dot_path);
 
     const test_mod = b.createModule(.{
-        .root_source_file = b.path("src/tests.zig"),
+        .root_source_file = b.path("tests/mod.zig"),
         .target = target,
         .optimize = optimize,
     });
     test_mod.addOptions("build_options", test_options);
+
+    // Single lib module so all src files belong to exactly one module.
+    const lib_mod = b.createModule(.{
+        .root_source_file = b.path("src/lib.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    test_mod.addImport("lib", lib_mod);
 
     // Add ohsnap for snapshot testing
     const ohsnap = b.dependency("ohsnap", .{

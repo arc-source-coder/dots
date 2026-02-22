@@ -1,45 +1,37 @@
+//! Storage layer - all FS-bound operations.
+
 const std = @import("std");
 const fs = std.fs;
 const Allocator = std.mem.Allocator;
+
+const issue_mod = @import("Issue.zig");
+
+const Issue = issue_mod.Issue;
+const Status = issue_mod.Status;
+const IssueError = issue_mod.IssueError;
+
+const frontmatter_mod = @import("Frontmatter.zig");
+const parseFrontmatter = frontmatter_mod.parseFrontmatter;
+const serializeFrontmatter = frontmatter_mod.serializeFrontmatter;
 
 pub const dots_dir = ".dots";
 const archive_dir = ".dots/archive";
 
 // Buffer size constants
 const max_path_len = 512; // Maximum path length for file operations
-const max_id_len = 128; // Maximum ID length (validated in validateId)
 const max_issue_file_size = 1024 * 1024; // 1MB max issue file
-const default_priority: i64 = 2; // Default priority for new issues
 
-// Errors
+// Storage errors - FS-bound only
 pub const StorageError = error{
-    IssueNotFound,
-    IssueAlreadyExists,
-    AmbiguousId,
     DependencyNotFound,
     DependencyCycle,
     DependencyConflict,
-    InvalidFrontmatter,
-    InvalidStatus,
-    InvalidId,
+    InvalidDependencyType,
     IoError,
 };
 
-/// Validates that an ID is safe for use in paths and YAML
-pub fn validateId(id: []const u8) StorageError!void {
-    if (id.len == 0) return StorageError.InvalidId;
-    if (id.len > max_id_len) return StorageError.InvalidId;
-    // Reject path traversal attempts
-    if (std.mem.indexOf(u8, id, "/") != null) return StorageError.InvalidId;
-    if (std.mem.indexOf(u8, id, "\\") != null) return StorageError.InvalidId;
-    if (std.mem.indexOf(u8, id, "..") != null) return StorageError.InvalidId;
-    if (std.mem.eql(u8, id, ".")) return StorageError.InvalidId;
-    // Reject control characters and YAML-sensitive characters
-    for (id) |c| {
-        if (c < 0x20 or c == 0x7F) return StorageError.InvalidId;
-        if (c == '#' or c == ':' or c == '\'' or c == '"') return StorageError.InvalidId;
-    }
-}
+/// Combined error type for Storage operations
+pub const Error = StorageError || IssueError;
 
 /// Write content to file atomically (write to unique .tmp, sync, rename)
 /// Uses random suffix to prevent concurrent write conflicts
@@ -60,159 +52,6 @@ fn writeFileAtomic(dir: fs.Dir, path: []const u8, content: []const u8) !void {
 
     try dir.rename(tmp_path, path);
 }
-
-// Status enum with comptime string map
-pub const Status = enum {
-    open,
-    active,
-    closed,
-
-    const map = std.StaticStringMap(Status).initComptime(.{
-        .{ "open", .open },
-        .{ "active", .active },
-        .{ "closed", .closed },
-        .{ "done", .closed }, // alias
-    });
-
-    pub fn parse(s: []const u8) ?Status {
-        return map.get(s);
-    }
-
-    pub fn toString(self: Status) []const u8 {
-        return switch (self) {
-            .open => "open",
-            .active => "active",
-            .closed => "closed",
-        };
-    }
-
-    pub fn display(self: Status) []const u8 {
-        return switch (self) {
-            .open => "open",
-            .active => "active",
-            .closed => "done",
-        };
-    }
-
-    pub fn char(self: Status) u8 {
-        return switch (self) {
-            .open => 'o',
-            .active => '>',
-            .closed => 'x',
-        };
-    }
-
-    pub fn symbol(self: Status) []const u8 {
-        return switch (self) {
-            .open => "○",
-            .active => ">",
-            .closed => "✓",
-        };
-    }
-};
-
-pub const Issue = struct {
-    id: []const u8,
-    title: []const u8,
-    description: []const u8,
-    status: Status,
-    priority: i64,
-    created_at: []const u8,
-    closed_at: ?[]const u8,
-    close_reason: ?[]const u8,
-    blockers: []const []const u8,
-
-    /// Compare issues by priority (ascending) then created_at (ascending)
-    pub fn order(_: void, a: Issue, b: Issue) bool {
-        if (a.priority != b.priority) return a.priority < b.priority;
-        return std.mem.order(u8, a.created_at, b.created_at) == .lt;
-    }
-
-    /// Create a copy with updated status fields (borrows all strings)
-    pub fn withStatus(self: Issue, status: Status, closed_at: ?[]const u8, close_reason: ?[]const u8) Issue {
-        return .{
-            .id = self.id,
-            .title = self.title,
-            .description = self.description,
-            .status = status,
-            .priority = self.priority,
-            .created_at = self.created_at,
-            .closed_at = closed_at,
-            .close_reason = close_reason,
-            .blockers = self.blockers,
-        };
-    }
-
-    /// Create a copy with updated blockers (borrows all strings)
-    pub fn withBlockers(self: Issue, blockers: []const []const u8) Issue {
-        return .{
-            .id = self.id,
-            .title = self.title,
-            .description = self.description,
-            .status = self.status,
-            .priority = self.priority,
-            .created_at = self.created_at,
-            .closed_at = self.closed_at,
-            .close_reason = self.close_reason,
-            .blockers = blockers,
-        };
-    }
-
-    /// Create a deep copy of this issue with all strings duplicated
-    pub fn clone(self: Issue, allocator: Allocator) !Issue {
-        const id = try allocator.dupe(u8, self.id);
-        errdefer allocator.free(id);
-
-        const title = try allocator.dupe(u8, self.title);
-        errdefer allocator.free(title);
-
-        const description = try allocator.dupe(u8, self.description);
-        errdefer allocator.free(description);
-
-        const created_at = try allocator.dupe(u8, self.created_at);
-        errdefer allocator.free(created_at);
-
-        const closed_at = if (self.closed_at) |c| try allocator.dupe(u8, c) else null;
-        errdefer if (closed_at) |c| allocator.free(c);
-
-        const close_reason = if (self.close_reason) |r| try allocator.dupe(u8, r) else null;
-        errdefer if (close_reason) |r| allocator.free(r);
-
-        var blockers: std.ArrayList([]const u8) = .{};
-        errdefer {
-            for (blockers.items) |b| allocator.free(b);
-            blockers.deinit(allocator);
-        }
-        for (self.blockers) |b| {
-            const duped = try allocator.dupe(u8, b);
-            try blockers.append(allocator, duped);
-        }
-
-        return .{
-            .id = id,
-            .title = title,
-            .description = description,
-            .status = self.status,
-            .priority = self.priority,
-            .created_at = created_at,
-            .closed_at = closed_at,
-            .close_reason = close_reason,
-            .blockers = try blockers.toOwnedSlice(allocator),
-        };
-    }
-
-    pub fn deinit(self: *Issue, allocator: Allocator) void {
-        allocator.free(self.id);
-        allocator.free(self.title);
-        allocator.free(self.description);
-        allocator.free(self.created_at);
-        if (self.closed_at) |s| allocator.free(s);
-        if (self.close_reason) |s| allocator.free(s);
-        for (self.blockers) |b| allocator.free(b);
-        allocator.free(self.blockers);
-        self.* = undefined;
-    }
-};
 
 pub const StatusMap = std.StringHashMap(Status);
 
@@ -254,332 +93,6 @@ const ResolveState = struct {
     }
 };
 
-pub fn freeIssues(allocator: Allocator, issues: []Issue) void {
-    for (issues) |*issue| {
-        issue.deinit(allocator);
-    }
-    allocator.free(issues);
-}
-
-pub fn freeScopes(allocator: Allocator, scopes: []const []const u8) void {
-    for (scopes) |s| allocator.free(s);
-    allocator.free(scopes);
-}
-
-// YAML Frontmatter parsing
-const Frontmatter = struct {
-    title: []const u8 = "",
-    status: Status = .open,
-    priority: i64 = default_priority,
-    created_at: []const u8 = "",
-    closed_at: ?[]const u8 = null,
-    close_reason: ?[]const u8 = null,
-    blockers: []const []const u8 = &.{},
-};
-
-const ParseResult = struct {
-    frontmatter: Frontmatter,
-    description: []const u8,
-    // Track allocated strings for cleanup
-    allocated_blockers: [][]const u8,
-    allocated_title: ?[]const u8 = null,
-
-    pub fn deinit(self: *ParseResult, allocator: Allocator) void {
-        if (self.allocated_title) |t| allocator.free(t);
-        for (self.allocated_blockers) |b| allocator.free(b);
-        allocator.free(self.allocated_blockers);
-        self.* = undefined;
-    }
-};
-
-// Frontmatter field enum and map (file-scope for efficiency)
-const FrontmatterField = enum {
-    title,
-    status,
-    priority,
-    created_at,
-    closed_at,
-    close_reason,
-    blockers,
-};
-
-const frontmatter_field_map = std.StaticStringMap(FrontmatterField).initComptime(.{
-    .{ "title", .title },
-    .{ "status", .status },
-    .{ "priority", .priority },
-    .{ "created-at", .created_at },
-    .{ "closed-at", .closed_at },
-    .{ "close-reason", .close_reason },
-    .{ "blockers", .blockers },
-});
-
-/// Result of parsing a YAML value - clearly indicates ownership
-const YamlValue = union(enum) {
-    borrowed: []const u8, // Points to input, caller must NOT free
-    owned: []const u8, // Allocated, caller MUST free
-
-    fn slice(self: YamlValue) []const u8 {
-        return switch (self) {
-            .borrowed => |s| s,
-            .owned => |s| s,
-        };
-    }
-
-    fn getOwned(self: YamlValue) ?[]const u8 {
-        return switch (self) {
-            .borrowed => null,
-            .owned => |s| s,
-        };
-    }
-};
-
-/// Strip leading and trailing quotes from a YAML value
-/// Use only for values that never contain escape sequences (e.g. timestamps).
-fn stripYamlQuotes(value: []const u8) []const u8 {
-    if (value.len >= 2 and value[0] == '"' and value[value.len - 1] == '"') {
-        return value[1 .. value.len - 1];
-    }
-    return value;
-}
-
-/// Parse a YAML value, handling quoted strings with escape sequences
-fn parseYamlValue(allocator: Allocator, value: []const u8) !YamlValue {
-    if (value.len < 2 or value[0] != '"' or value[value.len - 1] != '"') {
-        // Unquoted value, use as-is (caller should not free)
-        return .{ .borrowed = value };
-    }
-    // Quoted value - unescape it
-    var result: std.ArrayList(u8) = .{};
-    errdefer result.deinit(allocator);
-
-    var i: usize = 1; // Skip opening quote
-    while (i < value.len - 1) { // Stop before closing quote
-        if (value[i] == '\\' and i + 1 < value.len - 1) {
-            const next = value[i + 1];
-            switch (next) {
-                'n' => try result.append(allocator, '\n'),
-                'r' => try result.append(allocator, '\r'),
-                't' => try result.append(allocator, '\t'),
-                '"' => try result.append(allocator, '"'),
-                '\\' => try result.append(allocator, '\\'),
-                else => {
-                    try result.append(allocator, '\\');
-                    try result.append(allocator, next);
-                },
-            }
-            i += 2; // Skip backslash and escaped char
-        } else {
-            try result.append(allocator, value[i]);
-            i += 1;
-        }
-    }
-    return .{ .owned = try result.toOwnedSlice(allocator) };
-}
-
-fn parseFrontmatter(allocator: Allocator, content: []const u8) !ParseResult {
-    // Find YAML delimiters
-    const frontmatter_start: usize = if (std.mem.startsWith(u8, content, "---\r\n"))
-        5
-    else if (std.mem.startsWith(u8, content, "---\n"))
-        4
-    else
-        return StorageError.InvalidFrontmatter;
-
-    const end_marker = std.mem.indexOf(u8, content[frontmatter_start..], "\n---");
-    if (end_marker == null) {
-        return StorageError.InvalidFrontmatter;
-    }
-
-    const yaml_content = content[frontmatter_start .. frontmatter_start + end_marker.?];
-
-    // Skip "---" and an optional trailing line ending after the closing delimiter.
-    var description_start = frontmatter_start + end_marker.? + 4; // skip "\n---"
-    if (description_start < content.len and content[description_start] == '\r') {
-        description_start += 1;
-    }
-    if (description_start < content.len and content[description_start] == '\n') {
-        description_start += 1;
-    }
-    const description = if (description_start < content.len)
-        std.mem.trim(u8, content[description_start..], "\n\r\t ")
-    else
-        "";
-
-    var fm: Frontmatter = .{};
-    var blockers_list: std.ArrayList([]const u8) = .{};
-    var allocated_title: ?[]const u8 = null;
-    errdefer {
-        if (allocated_title) |t| allocator.free(t);
-        for (blockers_list.items) |b| allocator.free(b);
-        blockers_list.deinit(allocator);
-    }
-
-    var in_blockers = false;
-    var lines = std.mem.splitScalar(u8, yaml_content, '\n');
-
-    while (lines.next()) |line| {
-        const trimmed = std.mem.trim(u8, line, "\r\t ");
-
-        // Handle blockers array items
-        if (in_blockers) {
-            if (std.mem.startsWith(u8, trimmed, "- ")) {
-                const block_id = std.mem.trim(u8, trimmed[2..], " ");
-                // Validate block ID to prevent path traversal attacks
-                validateId(block_id) catch return StorageError.InvalidFrontmatter;
-                const duped = try allocator.dupe(u8, block_id);
-                try blockers_list.append(allocator, duped);
-                continue;
-            } else if (trimmed.len > 0 and !std.mem.startsWith(u8, trimmed, " ")) {
-                in_blockers = false;
-            } else {
-                continue;
-            }
-        }
-
-        // Parse key: value
-        const colon_idx = std.mem.indexOf(u8, trimmed, ":") orelse continue;
-        const key = trimmed[0..colon_idx];
-        const value = std.mem.trim(u8, trimmed[colon_idx + 1 ..], " ");
-
-        const field = frontmatter_field_map.get(key) orelse continue;
-
-        switch (field) {
-            .title => {
-                const parsed = try parseYamlValue(allocator, value);
-                fm.title = parsed.slice();
-                allocated_title = parsed.getOwned();
-            },
-            .status => fm.status = Status.parse(value) orelse return StorageError.InvalidStatus,
-            .priority => fm.priority = std.fmt.parseInt(i64, value, 10) catch return StorageError.InvalidFrontmatter,
-            .created_at => fm.created_at = stripYamlQuotes(value),
-            .closed_at => fm.closed_at = if (value.len > 0) stripYamlQuotes(value) else null,
-            .close_reason => fm.close_reason = if (value.len > 0) stripYamlQuotes(value) else null,
-            .blockers => in_blockers = true,
-        }
-    }
-
-    const allocated_blockers = try blockers_list.toOwnedSlice(allocator);
-    fm.blockers = allocated_blockers;
-
-    // Validate required fields
-    if (fm.title.len == 0 or fm.created_at.len == 0) {
-        // Clean up allocations on validation failure
-        for (allocated_blockers) |b| allocator.free(b);
-        allocator.free(allocated_blockers);
-        if (allocated_title) |t| {
-            allocator.free(t);
-            allocated_title = null; // Prevent errdefer double-free
-        }
-        return StorageError.InvalidFrontmatter;
-    }
-
-    return .{
-        .frontmatter = fm,
-        .description = description,
-        .allocated_blockers = allocated_blockers,
-        .allocated_title = allocated_title,
-    };
-}
-
-/// Returns true if string needs YAML quoting
-fn needsYamlQuoting(s: []const u8) bool {
-    if (s.len == 0) return true;
-    // Check for characters that need quoting
-    for (s) |c| {
-        if (c == '\n' or c == '\r' or c == ':' or c == '#' or c == '"' or c == '\'' or c == '\\') return true;
-    }
-    // Leading/trailing whitespace
-    if (s[0] == ' ' or s[0] == '\t' or s[s.len - 1] == ' ' or s[s.len - 1] == '\t') return true;
-    return false;
-}
-
-/// Write a YAML-safe string value, quoting and escaping as needed
-fn writeYamlValue(allocator: Allocator, buf: *std.ArrayList(u8), value: []const u8) !void {
-    if (!needsYamlQuoting(value)) {
-        try buf.appendSlice(allocator, value);
-        return;
-    }
-    // Use double quotes and escape special characters
-    try buf.append(allocator, '"');
-    for (value) |c| {
-        switch (c) {
-            '"' => try buf.appendSlice(allocator, "\\\""),
-            '\\' => try buf.appendSlice(allocator, "\\\\"),
-            '\n' => try buf.appendSlice(allocator, "\\n"),
-            '\r' => try buf.appendSlice(allocator, "\\r"),
-            '\t' => try buf.appendSlice(allocator, "\\t"),
-            else => try buf.append(allocator, c),
-        }
-    }
-    try buf.append(allocator, '"');
-}
-
-fn serializeFrontmatter(allocator: Allocator, issue: Issue) ![]u8 {
-    var buf: std.ArrayList(u8) = .{};
-    errdefer buf.deinit(allocator);
-
-    try buf.appendSlice(allocator, "---\n");
-    try buf.appendSlice(allocator, "title: ");
-    try writeYamlValue(allocator, &buf, issue.title);
-    try buf.appendSlice(allocator, "\nstatus: ");
-    try buf.appendSlice(allocator, issue.status.toString());
-    try buf.appendSlice(allocator, "\npriority: ");
-
-    var priority_buf: [21]u8 = undefined; // i64 max is 19 digits + sign
-    const priority_str = std.fmt.bufPrint(&priority_buf, "{d}", .{issue.priority}) catch return error.OutOfMemory;
-    try buf.appendSlice(allocator, priority_str);
-
-    try buf.appendSlice(allocator, "\ncreated-at: ");
-    try writeYamlValue(allocator, &buf, issue.created_at);
-
-    if (issue.closed_at) |closed_at| {
-        try buf.appendSlice(allocator, "\nclosed-at: ");
-        try writeYamlValue(allocator, &buf, closed_at);
-    }
-
-    if (issue.close_reason) |reason| {
-        try buf.appendSlice(allocator, "\nclose-reason: ");
-        try writeYamlValue(allocator, &buf, reason);
-    }
-
-    if (issue.blockers.len > 0) {
-        try buf.appendSlice(allocator, "\nblockers:");
-        for (issue.blockers) |block_id| {
-            try buf.appendSlice(allocator, "\n  - ");
-            try buf.appendSlice(allocator, block_id);
-        }
-    }
-
-    try buf.appendSlice(allocator, "\n---\n");
-
-    if (issue.description.len > 0) {
-        try buf.appendSlice(allocator, "\n");
-        try buf.appendSlice(allocator, issue.description);
-        try buf.appendSlice(allocator, "\n");
-    }
-
-    return buf.toOwnedSlice(allocator);
-}
-
-/// Extract the scope (prefix) from an ID like "app-001" → "app", "my-scope-001" → "my-scope".
-/// Returns null if the ID doesn't match the {scope}-{NNN} pattern.
-pub fn extractScope(id: []const u8) ?[]const u8 {
-    // Find last '-'
-    var last_dash: ?usize = null;
-    for (0..id.len) |i| {
-        if (id[i] == '-') last_dash = i;
-    }
-    const dash = last_dash orelse return null;
-    if (dash == 0 or dash + 1 >= id.len) return null;
-
-    // Check suffix is all digits
-    const suffix = id[dash + 1 ..];
-    for (suffix) |c| {
-        if (!std.ascii.isDigit(c)) return null;
-    }
-    return id[0..dash];
-}
-
 /// Generate the next sequential ID for a given scope.
 /// Scans the scope directory for existing `{scope}-NNN.md` files,
 /// finds the highest number, and returns `{scope}-{NNN+1}`.
@@ -616,27 +129,11 @@ fn scanHighestId(dir: fs.Dir, scope: []const u8, highest: *u32) void {
     while (iter.next() catch null) |entry| {
         if (entry.kind == .file and std.mem.endsWith(u8, entry.name, ".md")) {
             const id = entry.name[0 .. entry.name.len - 3];
-            if (extractScopeNumber(id, scope)) |num| {
+            if (issue_mod.extractScopeNumber(id, scope)) |num| {
                 if (num > highest.*) highest.* = num;
             }
         }
     }
-}
-
-/// Extract the numeric suffix from an ID matching `{scope}-{NNN}`.
-/// Returns null if the ID doesn't match the expected pattern.
-fn extractScopeNumber(id: []const u8, scope: []const u8) ?u32 {
-    // Must start with "{scope}-"
-    if (id.len <= scope.len + 1) return null;
-    if (!std.mem.startsWith(u8, id, scope)) return null;
-    if (id[scope.len] != '-') return null;
-
-    const suffix = id[scope.len + 1 ..];
-    // Must be all digits
-    for (suffix) |c| {
-        if (!std.ascii.isDigit(c)) return null;
-    }
-    return std.fmt.parseInt(u32, suffix, 10) catch null;
 }
 
 pub const Storage = struct {
@@ -685,8 +182,8 @@ pub const Storage = struct {
             try self.scanResolve(d, states[0..]);
         }
 
-        if (states[0].ambig) return StorageError.AmbiguousId;
-        if (states[0].match == null) return StorageError.IssueNotFound;
+        if (states[0].ambig) return error.AmbiguousId;
+        if (states[0].match == null) return error.IssueNotFound;
 
         return states[0].match.?;
     }
@@ -697,8 +194,8 @@ pub const Storage = struct {
 
         try self.scanResolve(self.dots_dir, states[0..]);
 
-        if (states[0].ambig) return StorageError.AmbiguousId;
-        if (states[0].match == null) return StorageError.IssueNotFound;
+        if (states[0].ambig) return error.AmbiguousId;
+        if (states[0].match == null) return error.IssueNotFound;
 
         return states[0].match.?;
     }
@@ -771,7 +268,7 @@ pub const Storage = struct {
 
     pub fn issueExists(self: *Storage, id: []const u8) !bool {
         const path = self.findIssuePath(id) catch |err| switch (err) {
-            StorageError.IssueNotFound => return false,
+            error.IssueNotFound => return false,
             else => return err,
         };
         self.allocator.free(path);
@@ -782,7 +279,7 @@ pub const Storage = struct {
         var path_buf: [max_path_len]u8 = undefined;
 
         // Derive scope from ID and look in scope folder
-        if (extractScope(id)) |scope| {
+        if (issue_mod.extractScope(id)) |scope| {
             // Try scope folder: .dots/{scope}/{id}.md
             const scope_path = std.fmt.bufPrint(&path_buf, "{s}/{s}.md", .{ scope, id }) catch return StorageError.IoError;
             if (self.dots_dir.statFile(scope_path)) |_| {
@@ -796,15 +293,15 @@ pub const Storage = struct {
             } else |_| {}
         }
 
-        return StorageError.IssueNotFound;
+        return error.IssueNotFound;
     }
 
     pub fn getIssue(self: *Storage, id: []const u8) !?Issue {
         // Validate ID to prevent path traversal attacks
-        try validateId(id);
+        try issue_mod.validateId(id);
 
         const path = self.findIssuePath(id) catch |err| switch (err) {
-            StorageError.IssueNotFound => return null,
+            error.IssueNotFound => return null,
             else => return err,
         };
         defer self.allocator.free(path);
@@ -865,20 +362,20 @@ pub const Storage = struct {
 
     pub fn createIssue(self: *Storage, issue: Issue) !void {
         // Validate IDs to prevent path traversal
-        try validateId(issue.id);
-        for (issue.blockers) |b| try validateId(b);
+        try issue_mod.validateId(issue.id);
+        for (issue.blockers) |b| try issue_mod.validateId(b);
 
         // Prevent overwriting existing issues
         // Note: TOCTOU race exists here - concurrent creates may both pass this check.
         // The atomic write ensures no corruption, but last writer wins.
         if (try self.issueExists(issue.id)) {
-            return StorageError.IssueAlreadyExists;
+            return error.IssueAlreadyExists;
         }
 
         const content = try serializeFrontmatter(self.allocator, issue);
         defer self.allocator.free(content);
 
-        const scope = extractScope(issue.id) orelse return StorageError.InvalidId;
+        const scope = issue_mod.extractScope(issue.id) orelse return IssueError.InvalidId;
         self.dots_dir.makeDir(scope) catch |err| switch (err) {
             error.PathAlreadyExists => {},
             else => return err,
@@ -926,7 +423,7 @@ pub const Storage = struct {
     /// Archive an issue by ID (for migration of already-closed issues)
     pub fn archiveIssue(self: *Storage, id: []const u8) !void {
         const path = self.findIssuePath(id) catch |err| switch (err) {
-            StorageError.IssueNotFound => return StorageError.IssueNotFound,
+            error.IssueNotFound => return error.IssueNotFound,
             else => return err,
         };
         defer self.allocator.free(path);
@@ -938,7 +435,7 @@ pub const Storage = struct {
         if (std.mem.startsWith(u8, path, "archive/")) return;
 
         var archive_path_buf: [max_path_len]u8 = undefined;
-        if (extractScope(id)) |scope| {
+        if (issue_mod.extractScope(id)) |scope| {
             var archive_scope_buf: [max_path_len]u8 = undefined;
             const archive_scope = std.fmt.bufPrint(&archive_scope_buf, "archive/{s}", .{scope}) catch return StorageError.IoError;
             self.dots_dir.makeDir(archive_scope) catch |err| switch (err) {
@@ -968,7 +465,7 @@ pub const Storage = struct {
     fn removeDependencyReferences(self: *Storage, deleted_id: []const u8) !void {
         // Get all issues (including archived)
         const issues = try self.listAllIssuesIncludingArchived();
-        defer freeIssues(self.allocator, issues);
+        defer issue_mod.freeIssues(self.allocator, issues);
 
         for (issues) |issue| {
             // Check if this issue references the deleted ID
@@ -1096,7 +593,7 @@ pub const Storage = struct {
 
                 // Only skip expected parsing errors; propagate IO/allocation errors
                 var issue = self.readIssueFromPath(path, id) catch |err| switch (err) {
-                    StorageError.InvalidFrontmatter, StorageError.InvalidStatus => continue, // Malformed file, skip
+                    IssueError.InvalidFrontmatter, IssueError.InvalidStatus => continue, // Malformed file, skip
                     else => return err, // IO/allocation errors must propagate
                 };
 
@@ -1242,8 +739,8 @@ pub const Storage = struct {
     }
 
     pub fn removeDependency(self: *Storage, issue_id: []const u8, depends_on_id: []const u8) !void {
-        try validateId(issue_id);
-        try validateId(depends_on_id);
+        try issue_mod.validateId(issue_id);
+        try issue_mod.validateId(depends_on_id);
 
         const path = try self.findIssuePath(issue_id);
         defer self.allocator.free(path);
@@ -1282,8 +779,8 @@ pub const Storage = struct {
 
     pub fn addDependency(self: *Storage, issue_id: []const u8, depends_on_id: []const u8, dep_type: []const u8) !void {
         // Validate IDs to prevent path traversal
-        try validateId(issue_id);
-        try validateId(depends_on_id);
+        try issue_mod.validateId(issue_id);
+        try issue_mod.validateId(depends_on_id);
 
         // Verify the dependency target exists
         if (!try self.issueExists(depends_on_id)) {
@@ -1295,7 +792,7 @@ pub const Storage = struct {
             .{ "blockers", {} },
         });
         if (valid_dep_types.get(dep_type) == null) {
-            return StorageError.InvalidFrontmatter;
+            return error.InvalidDependencyType;
         }
 
         // For "blockers" type, add to the issue's blockers array

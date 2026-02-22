@@ -1,12 +1,18 @@
 const std = @import("std");
-const h = @import("test_helpers.zig");
+const h = @import("helpers.zig");
 
 const storage_mod = h.storage_mod;
+const issue_mod = h.issue_mod;
+
+const Issue = issue_mod.Issue;
+const Status = issue_mod.Status;
+
 const zc = h.zc;
-const Status = h.Status;
-const Issue = h.Issue;
+
 const LifecycleOracle = h.LifecycleOracle;
-const OpType = h.OpType;
+// Operation types for lifecycle simulation
+const OpType = enum { create, delete, set_open, set_active, set_closed, add_dep };
+
 const fixed_timestamp = h.fixed_timestamp;
 const makeTestIssue = h.makeTestIssue;
 const runDot = h.runDot;
@@ -60,7 +66,7 @@ test "prop: ready issues match oracle" {
             const issues = ts.storage.getReadyIssues() catch |err| {
                 std.debug.panic("get ready: {}", .{err});
             };
-            defer storage_mod.freeIssues(allocator, issues);
+            defer issue_mod.freeIssues(allocator, issues);
 
             const expected = oracleReady(args.statuses, args.deps);
             var found = [_]bool{ false, false, false, false };
@@ -120,7 +126,7 @@ test "prop: listIssues filter matches oracle" {
                 const issues = ts.storage.listIssues(filter) catch |err| {
                     std.debug.panic("list issues: {}", .{err});
                 };
-                defer storage_mod.freeIssues(allocator, issues);
+                defer issue_mod.freeIssues(allocator, issues);
 
                 const expected_count = oracleListCount(args.statuses, filter);
                 if (issues.len != expected_count) return false;
@@ -325,13 +331,13 @@ test "prop: lifecycle simulation maintains invariants" {
 
             // 1. Ready count matches oracle
             const ready_issues = ts.storage.getReadyIssues() catch return false;
-            defer storage_mod.freeIssues(allocator, ready_issues);
+            defer issue_mod.freeIssues(allocator, ready_issues);
             if (ready_issues.len != oracle.readyCount()) return false;
 
             // 2. Status counts match
             for ([_]Status{ .open, .active, .closed }) |status| {
                 const issues = ts.storage.listIssues(status) catch return false;
-                defer storage_mod.freeIssues(allocator, issues);
+                defer issue_mod.freeIssues(allocator, issues);
                 if (issues.len != oracle.countByStatus(status)) return false;
             }
 
@@ -405,7 +411,7 @@ test "prop: transitive blocking chains" {
 
             // Check if target is in ready list
             const ready = ts.storage.getReadyIssues() catch return false;
-            defer storage_mod.freeIssues(allocator, ready);
+            defer issue_mod.freeIssues(allocator, ready);
 
             var target_in_ready = false;
             for (ready) |issue| {
@@ -499,7 +505,7 @@ test "prop: priority ordering in list" {
 
             // Get list
             const issues = ts.storage.listIssues(.open) catch return false;
-            defer storage_mod.freeIssues(allocator, issues);
+            defer issue_mod.freeIssues(allocator, issues);
 
             // Verify sorted by priority (ascending)
             var prev_priority: i64 = -1;
@@ -631,12 +637,12 @@ test "prop: search finds exactly matching issues" {
 
             // Search for "foo"
             const foo_results = ts.storage.searchIssues("foo") catch return false;
-            defer storage_mod.freeIssues(allocator, foo_results);
+            defer issue_mod.freeIssues(allocator, foo_results);
             if (foo_results.len != foo_count) return false;
 
             // Search for "bar"
             const bar_results = ts.storage.searchIssues("bar") catch return false;
-            defer storage_mod.freeIssues(allocator, bar_results);
+            defer issue_mod.freeIssues(allocator, bar_results);
             if (bar_results.len != bar_count) return false;
 
             return true;

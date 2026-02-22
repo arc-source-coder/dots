@@ -1,6 +1,6 @@
 const std = @import("std");
 const fs = std.fs;
-const h = @import("test_helpers.zig");
+const h = @import("helpers.zig");
 
 const Issue = h.Issue;
 const OhSnap = h.OhSnap;

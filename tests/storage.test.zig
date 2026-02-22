@@ -1,9 +1,12 @@
 const std = @import("std");
-const h = @import("test_helpers.zig");
+const h = @import("helpers.zig");
 
+const issue_mod = h.issue_mod;
 const storage_mod = h.storage_mod;
-const Status = h.Status;
-const Issue = h.Issue;
+
+const Issue = issue_mod.Issue;
+const Status = issue_mod.Status;
+
 const fixed_timestamp = h.fixed_timestamp;
 const makeTestIssue = h.makeTestIssue;
 const setupTestDirOrPanic = h.setupTestDirOrPanic;
@@ -71,7 +74,7 @@ test "storage: delete cascade unblocks dependents" {
     const ready1 = ts.storage.getReadyIssues() catch |err| {
         std.debug.panic("ready1: {}", .{err});
     };
-    defer storage_mod.freeIssues(allocator, ready1);
+    defer issue_mod.freeIssues(allocator, ready1);
     try std.testing.expectEqual(@as(usize, 1), ready1.len); // Only blocker is ready
 
     // Delete blocker
@@ -83,7 +86,7 @@ test "storage: delete cascade unblocks dependents" {
     const ready2 = ts.storage.getReadyIssues() catch |err| {
         std.debug.panic("ready2: {}", .{err});
     };
-    defer storage_mod.freeIssues(allocator, ready2);
+    defer issue_mod.freeIssues(allocator, ready2);
     try std.testing.expectEqual(@as(usize, 1), ready2.len);
     try std.testing.expectEqualStrings("dependent-002", ready2[0].id);
 }
@@ -107,7 +110,7 @@ test "storage: delete cleans up dependency refs" {
 
     // Verify external is blocked
     const ready1 = try ts.storage.getReadyIssues();
-    defer storage_mod.freeIssues(allocator, ready1);
+    defer issue_mod.freeIssues(allocator, ready1);
     var external_ready = false;
     for (ready1) |r| {
         if (std.mem.eql(u8, r.id, "test-021")) external_ready = true;
@@ -118,7 +121,7 @@ test "storage: delete cleans up dependency refs" {
 
     // Verify external is now unblocked (child ref was cleaned up)
     const ready2 = try ts.storage.getReadyIssues();
-    defer storage_mod.freeIssues(allocator, ready2);
+    defer issue_mod.freeIssues(allocator, ready2);
     try std.testing.expectEqual(@as(usize, 1), ready2.len);
     try std.testing.expectEqualStrings("test-021", ready2[0].id);
 
