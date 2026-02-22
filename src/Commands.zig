@@ -401,6 +401,10 @@ fn cmdShow(allocator: Allocator, args: []const []const u8) !void {
     var iss = try storage.getIssue(resolved) orelse fatal("Issue not found: {s}\n", .{args[0]});
     defer iss.deinit(allocator);
 
+    // Get the file path for this issue
+    const issue_path = storage.findIssuePath(resolved) catch fatal("Issue not found: {s}\n", .{args[0]});
+    defer allocator.free(issue_path);
+
     const w = stdout();
     const tty_conf = std.Io.tty.Config.detect(fs.File.stdout());
 
@@ -409,10 +413,11 @@ fn cmdShow(allocator: Allocator, args: []const []const u8) !void {
     try tty_conf.setColor(w, .cyan);
     try w.writeAll(iss.id);
     try tty_conf.setColor(w, .reset);
-    try w.print("\nTitle:    {s}\nStatus:   {s}\nPriority: {d}\n", .{
+    try w.print("\nTitle:    {s}\nStatus:   {s}\nPriority: {d}\nLocation: {s}\n", .{
         iss.title,
         iss.status.display(),
         iss.priority,
+        issue_path,
     });
     if (iss.description.len > 0) try w.print("Desc:     {s}\n", .{iss.description});
     try w.print("Created:  {s}\n", .{iss.created_at});

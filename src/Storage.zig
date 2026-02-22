@@ -275,7 +275,7 @@ pub const Storage = struct {
         return true;
     }
 
-    fn findIssuePath(self: *Storage, id: []const u8) ![]const u8 {
+    pub fn findIssuePath(self: *Storage, id: []const u8) ![]const u8 {
         var path_buf: [max_path_len]u8 = undefined;
 
         // Derive scope from ID and look in scope folder
