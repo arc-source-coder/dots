@@ -275,8 +275,13 @@ fn cmdReady(allocator: Allocator, _: []const []const u8) !void {
     defer issue_mod.freeIssues(allocator, issues);
 
     const w = stdout();
+    const tty_conf = std.Io.tty.Config.detect(fs.File.stdout());
+
     for (issues) |issue| {
-        try w.print("[{s}] {c} {s}\n", .{ issue.id, issue.status.char(), issue.title });
+        try tty_conf.setColor(w, .bright_green);
+        try w.print("[{s}] ", .{issue.id});
+        try tty_conf.setColor(w, .reset);
+        try w.print("{c} {s}\n", .{ issue.status.char(), issue.title });
     }
 }
 
@@ -421,7 +426,7 @@ fn cmdShow(allocator: Allocator, args: []const []const u8) !void {
     const tty_conf = std.Io.tty.Config.detect(fs.File.stdout());
 
     // Print header: ID • Title
-    try tty_conf.setColor(w, .yellow);
+    try tty_conf.setColor(w, .bright_yellow);
     try w.writeAll(iss.id);
     try tty_conf.setColor(w, .reset);
     try w.print(" • {s}\n", .{iss.title});
@@ -573,7 +578,9 @@ fn cmdList(allocator: Allocator, args: []const []const u8) !void {
             }
         }
 
+        try tty_conf.setColor(w, .bright_yellow);
         try w.print("{s} ({d} open)\n", .{ scope, visible.items.len });
+        try tty_conf.setColor(w, .reset);
 
         // Build set of visible IDs for quick lookup
         var visible_ids: std.StringHashMapUnmanaged(void) = .empty;
@@ -671,12 +678,16 @@ fn renderTreeNode(
     }
 
     if (cross_blockers.get(issue.id)) |blockers| {
+        try tty_conf.setColor(w, .bold);
         try w.writeAll(" [Blocked by ");
         for (blockers.items, 0..) |bid, bi| {
             if (bi > 0) try w.writeAll(", ");
+            try tty_conf.setColor(w, .bright_red);
             try w.writeAll(bid);
+            try tty_conf.setColor(w, .reset);
         }
         try w.writeAll("]");
+        try tty_conf.setColor(w, .reset);
     }
 
     try w.writeAll("\n");
